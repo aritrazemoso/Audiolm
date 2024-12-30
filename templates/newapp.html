@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Recording and Transcription</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container py-5">
+        <h1 class="text-center mb-4">Audio Recording and Transcription</h1>
+
+        <!-- Recording Buttons -->
+        <div class="d-flex justify-content-center mb-4">
+            <button id="startRecording" class="btn btn-primary me-2" onclick="startRecording()">Start Recording</button>
+            <button id="stopRecording" class="btn btn-danger" onclick="stopRecording()" disabled>Stop Recording</button>
+        </div>
+
+        <!-- Recording Skeleton -->
+        <div id="recordingSkeleton" class="text-center py-5" style="display: none;">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Recording...</span>
+            </div>
+            <p class="mt-3">Recording in progress...</p>
+        </div>
+
+        <!-- Recorded Audio Section -->
+        <div class="card mb-4" id="recordedAudioContainer" style="display: none;">
+            <div class="card-body">
+                <h5 class="card-title">Recorded Audio</h5>
+                <audio id="recordedAudioPlayer" controls class="w-100">
+                    <source id="recordedAudioSource" type="audio/wav">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
+        </div>
+
+        <!-- Transcription Skeleton -->
+        <div id="transcriptionSkeleton" class="bg-light p-3 rounded mb-4" style="display: none;">
+            <div class="placeholder-glow">
+                <span class="placeholder col-12"></span>
+                <span class="placeholder col-10"></span>
+                <span class="placeholder col-8"></span>
+            </div>
+        </div>
+
+        <!-- Transcription Section -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Transcription</h5>
+                <pre id="transcription" class="bg-light p-3 rounded"></pre>
+                <button id="generateAudio" class="btn btn-success mt-3" onclick="generateCombined()" disabled>Ask
+                    Chatgpt</button>
+            </div>
+        </div>
+
+        <!-- Response Section -->
+        <div class="card" id="chatgpt_response" style="display: none;">
+            <div class="card-body">
+                <h5 class="card-title">ChatGPT Response</h5>
+                <div id="responseText" class="bg-light p-3 rounded mb-3"></div>
+                <div class="text-center mb-3" id="loadingIndicator" style="display: none;">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading audio...</span>
+                    </div>
+                    <p class="mt-2">Processing audio response...</p>
+                </div>
+                <audio id="audioPlayer" controls class="w-100">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS and dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- JavaScript -->
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        let transcriptionText = "";
+        let websocket;
+        let audioContext;
+        let processor;
+        let input;
+        let audioBuffer = []; // Store all audio chunks
+
+        function initWebSocket() {
+            if (!websocket || websocket.readyState === WebSocket.CLOSED) {
+                websocket = new WebSocket("ws://localhost:8000/ws/audio");
+                websocket.onmessage = function (event) {
+                    document.getElementById("transcription").innerText = document.getElementById("transcription").innerText + " " + event.data;
+                    transcriptionText = document.getElementById("transcription").innerText;
+                };
+                websocket.onclose = function () {
+                    console.log("WebSocket closed. Retrying in 2 seconds...");
+                    setTimeout(initWebSocket, 2000);
+                };
+            }
+        }
+
+        function reset_state() {
+            isRecording = false;
+            audioChunks = [];
+            transcriptionText = "";
+            document.getElementById("transcription").innerText = "";
+            document.getElementById("audioPlayer").src = "";
+            document.getElementById("recordedAudioContainer").style.display = "none";
+            document.getElementById("generateAudio").disabled = true;
+            document.getElementById("chatgpt_response").style.display = "none";
+            document.getElementById("responseText").innerText = "";
+            document.getElementById("loadingIndicator").style.display = "none";
+            audioBuffer = [];
+        }
+
+        async function startRecording() {
+            reset_state();
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000
+                    }
+                });
+
+                audioContext = new AudioContext({
+                    sampleRate: 16000
+                });
+
+                input = audioContext.createMediaStreamSource(stream);
+                processor = audioContext.createScriptProcessor(1024, 1, 1);
+                input.connect(processor);
+                processor.connect(audioContext.destination);
+
+                processor.onaudioprocess = (e) => {
+                    audioChunks.push(e.inputBuffer.getChannelData(0));
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        const int16Data = new Int16Array(inputData.length);
+                        for (let i = 0; i < inputData.length; i++) {
+                            const s = Math.max(-1, Math.min(1, inputData[i]));
+                            int16Data[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                        }
+                        const message = JSON.stringify({
+                            audio: btoa(String.fromCharCode.apply(null, new Uint8Array(int16Data.buffer)))
+                        });
+                        websocket.send(message);
+                    }
+                };
+
+                document.getElementById("startRecording").disabled = true;
+                document.getElementById("stopRecording").disabled = false;
+                document.getElementById('recordingSkeleton').style.display = 'block';
+                document.getElementById("generateAudio").disabled = false;
+            } catch (error) {
+                console.error("Error starting recording:", error);
+                alert("Error starting recording. Please make sure you have a microphone connected.");
+            }
+        }
+
+        function stopRecording() {
+            if (processor && input) {
+                processor.disconnect();
+                input.disconnect();
+                if (audioContext) {
+                    audioContext.close();
+                }
+            }
+
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({ isFinal: true }));
+            }
+
+            document.getElementById("startRecording").disabled = false;
+            document.getElementById("stopRecording").disabled = true;
+            document.getElementById('recordingSkeleton').style.display = 'none';
+        }
+
+        function concatenateAudioBuffers(buffers) {
+            // Calculate the total length of all buffers
+            let totalLength = 0;
+            buffers.forEach(buffer => {
+                totalLength += buffer.byteLength;
+            });
+
+            // Create a new buffer with the total length
+            const tmp = new Uint8Array(totalLength);
+            let offset = 0;
+
+            // Copy each buffer into the new buffer
+            buffers.forEach(buffer => {
+                tmp.set(new Uint8Array(buffer), offset);
+                offset += buffer.byteLength;
+            });
+
+            return tmp.buffer;
+        }
+
+        async function generateCombined() {
+            const query = encodeURIComponent(transcriptionText);
+            document.getElementById("chatgpt_response").style.display = "block";
+            document.getElementById("responseText").innerText = "";
+            document.getElementById("loadingIndicator").style.display = "block";
+            document.getElementById("audioPlayer").style.display = "none";
+            audioBuffer = []; // Reset audio buffer
+
+            const eventSource = new EventSource(`/stream-combined/?query=${query}`);
+
+            eventSource.addEventListener('text', function (e) {
+                const data = JSON.parse(e.data);
+                document.getElementById("responseText").innerText += data.text;
+            });
+
+            eventSource.addEventListener('audio', function (e) {
+                const data = JSON.parse(e.data);
+                const audioData = base64ToArrayBuffer(data.audio);
+                audioBuffer.push(audioData);
+            });
+
+            eventSource.addEventListener('complete', function (e) {
+                // Combine all audio buffers and play
+                const combinedBuffer = concatenateAudioBuffers(audioBuffer);
+                const blob = new Blob([combinedBuffer], { type: 'audio/mpeg' });
+                const audioUrl = URL.createObjectURL(blob);
+
+                const audioPlayer = document.getElementById('audioPlayer');
+                audioPlayer.src = audioUrl;
+                audioPlayer.style.display = "block";
+                document.getElementById("loadingIndicator").style.display = "none";
+
+                audioPlayer.onended = () => {
+                    URL.revokeObjectURL(audioUrl);
+                };
+
+                eventSource.close();
+            });
+
+            eventSource.onerror = function () {
+                document.getElementById("loadingIndicator").style.display = "none";
+                eventSource.close();
+            };
+        }
+
+        function base64ToArrayBuffer(base64) {
+            const binaryString = window.atob(base64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        // Initialize WebSocket on page load
+        initWebSocket();
+    </script>
+</body>
+
+</html>
