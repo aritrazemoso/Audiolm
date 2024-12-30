@@ -77,9 +77,13 @@ async def chatgpt_send_to_websocket(websocket, user_query: str):
     chat_completion = client.chat.completions.create(
         messages=[
             {
+                "role": "system",
+                "content": "You are a helpful assistant. Please assist the user with their query. Please make the response within two lines",
+            },
+            {
                 "role": "user",
                 "content": user_query,
-            }
+            },
         ],
         model="llama3-8b-8192",
         stream=True,

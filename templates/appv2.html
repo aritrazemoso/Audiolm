@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Audio Recording Interface</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .spinner-border {
+            display: none;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        .loading .spinner-border {
+            display: inline-block;
+        }
+
+        .loading #generateAudio {
+            pointer-events: none;
+            opacity: 0.65;
+        }
+
+        .recording-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #dc3545;
+            display: inline-block;
+            margin-right: 8px;
+        }
+
+        .recording .recording-indicator {
+            animation: pulse 1.5s infinite;
+        }
+
+        .visualizer-container {
+            height: 100px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .visualizer-bar {
+            width: 3px;
+            margin: 0 1px;
+            background-color: #0d6efd;
+            position: absolute;
+            bottom: 0;
+            transition: height 0.1s ease;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.3;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        .timer {
+            font-family: monospace;
+            font-size: 1.5rem;
+        }
+
+        .controls-card {
+            background-color: #fff;
+            border: 1px solid rgba(0, 0, 0, .125);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, .1);
+        }
+
+        .audio-stats {
+            font-size: 0.875rem;
+            color: #6c757d;
+        }
+
+        .transcription-box {
+            min-height: 100px;
+            max-height: 200px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+
+<body class="bg-light">
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-lg-8">
+                <!-- Main Recording Card -->
+                <div class="card controls-card mb-4">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center justify-content-between mb-4">
+                            <h2 class="card-title mb-0">
+                                <span class="recording-indicator"></span>
+                                Audio Recorder
+                            </h2>
+                            <div class="timer" id="recordingTimer">00:00</div>
+                        </div>
+
+                        <!-- Visualizer -->
+                        <div class="visualizer-container mb-4" id="visualizer">
+                            <!-- Bars will be dynamically added here -->
+                        </div>
+
+                        <!-- Audio Stats -->
+                        <div class="d-flex justify-content-between audio-stats mb-4">
+                            <span>Sample Rate: 44.1kHz</span>
+                            <span>Bit Depth: 32-bit</span>
+                            <span>Channel: Mono</span>
+                        </div>
+
+                        <!-- Controls -->
+                        <div class="d-flex gap-2 justify-content-center">
+                            <button id="startRecording" class="btn btn-primary btn-lg px-4" onclick="startRecording()">
+                                Start Recording
+                            </button>
+                            <button id="stopRecording" class="btn btn-danger btn-lg px-4" onclick="stopRecording()"
+                                disabled>
+                                Stop
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Playback Card -->
+                <div class="card mb-4" id="recordedAudioContainer" style="display: none;">
+                    <div class="card-body">
+                        <h5 class="card-title mb-3">Recorded Audio</h5>
+                        <audio id="recordedAudioPlayer" controls class="w-100"></audio>
+                    </div>
+                </div>
+
+                <!-- Transcription Card -->
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title">Transcription</h5>
+                        <div id="transcription" class="transcription-box"></div>
+                        <div class="d-flex align-items-center">
+                            <button id="generateAudio" class="btn btn-success" onclick="generateAudio()" disabled>
+                                Ask ChatGPT
+                            </button>
+                            <div class="spinner-border spinner-border-sm text-success" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ChatGPT Response Card -->
+                <div class="card" id="chatgpt_audio" style="display: none;">
+                    <div class="card-body">
+                        <div id="queryText" class="mb-3"><strong>Query:</strong></div>
+                        <audio id="audioPlayer" controls autoplay class="w-100"></audio>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        let transcriptionText = "";
+        let websocket;
+        let audioContext;
+        let processor;
+        let input;
+        let analyser;
+        let visualizerBars = [];
+        let timerInterval;
+        let startTime;
+
+        // Initialize WebSocket
+        function initWebSocket() {
+            if (!websocket || websocket.readyState === WebSocket.CLOSED) {
+                websocket = new WebSocket("ws://localhost:8000/ws/audio");
+                websocket.onmessage = function (event) {
+                    document.getElementById("transcription").innerText += " " + event.data;
+                    transcriptionText = document.getElementById("transcription").innerText;
+                };
+                websocket.onclose = function () {
+                    console.log("WebSocket closed. Retrying in 2 seconds...");
+                    setTimeout(initWebSocket, 2000);
+                };
+            }
+        }
+
+        // Initialize visualizer
+        function initVisualizer() {
+            const visualizer = document.getElementById('visualizer');
+            const barCount = 64;
+
+            for (let i = 0; i < barCount; i++) {
+                const bar = document.createElement('div');
+                bar.className = 'visualizer-bar';
+                bar.style.left = `${(i * 4)}px`;
+                visualizerBars.push(bar);
+                visualizer.appendChild(bar);
+            }
+        }
+
+        // Update visualizer with audio data
+        function updateVisualizer(audioData) {
+            const values = Array.from(audioData);
+            const step = Math.floor(values.length / visualizerBars.length);
+
+            for (let i = 0; i < visualizerBars.length; i++) {
+                const value = values[i * step];
+                const height = (value / 256) * 100;
+                visualizerBars[i].style.height = `${height}%`;
+            }
+        }
+
+        // Update timer display
+        function updateTimer() {
+            const now = Date.now();
+            const diff = now - startTime;
+            const seconds = Math.floor(diff / 1000);
+            const minutes = Math.floor(seconds / 60);
+            const displaySeconds = (seconds % 60).toString().padStart(2, '0');
+            const displayMinutes = minutes.toString().padStart(2, '0');
+            document.getElementById('recordingTimer').textContent = `${displayMinutes}:${displaySeconds}`;
+        }
+
+        function reset_state() {
+            isRecording = false;
+            audioChunks = [];
+            transcriptionText = "";
+            document.getElementById("transcription").innerText = "";
+            document.getElementById("audioPlayer").src = "";
+            document.getElementById("recordedAudioContainer").style.display = "none";
+            document.getElementById("generateAudio").disabled = true;
+            document.getElementById("chatgpt_audio").style.display = "none";
+            document.body.classList.remove('recording');
+            clearInterval(timerInterval);
+            document.getElementById('recordingTimer').textContent = '00:00';
+            visualizerBars.forEach(bar => {
+                bar.style.height = '0%';
+            });
+        }
+
+        async function startRecording() {
+            reset_state();
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 44100,
+                        sampleSize: 32,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm;codecs=opus',
+                    bitsPerSecond: 256000
+                });
+
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const audioUrl = URL.createObjectURL(audioBlob);
+                    const audioPlayer = document.getElementById('recordedAudioPlayer');
+                    audioPlayer.src = audioUrl;
+                    document.getElementById('recordedAudioContainer').style.display = 'block';
+                    audioPlayer.load();
+                };
+
+                mediaRecorder.start();
+                isRecording = true;
+
+                // Create audio context with high quality settings
+                audioContext = new AudioContext({
+                    sampleRate: 44100,
+                    latencyHint: 'interactive'
+                });
+
+                input = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                input.connect(analyser);
+                analyser.connect(processor);
+                processor.connect(audioContext.destination);
+
+                document.body.classList.add('recording');
+                startTime = Date.now();
+                timerInterval = setInterval(updateTimer, 1000);
+
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+
+                function updateAudioLevel() {
+                    if (isRecording) {
+                        analyser.getByteFrequencyData(dataArray);
+                        updateVisualizer(dataArray);
+                        requestAnimationFrame(updateAudioLevel);
+                    }
+                }
+
+                updateAudioLevel();
+
+                processor.onaudioprocess = (e) => {
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        const int32Data = new Int32Array(inputData.length);
+
+                        for (let i = 0; i < inputData.length; i++) {
+                            const s = Math.max(-1, Math.min(1, inputData[i]));
+                            int32Data[i] = s < 0 ? s * 0x80000000 : s * 0x7FFFFFFF;
+                        }
+
+                        const message = JSON.stringify({
+                            audio: btoa(String.fromCharCode.apply(null, new Uint8Array(int32Data.buffer))),
+                            sampleRate: 44100,
+                            bitDepth: 32
+                        });
+
+                        websocket.send(message);
+                    }
+                };
+
+                document.getElementById("startRecording").disabled = true;
+                document.getElementById("stopRecording").disabled = false;
+                document.getElementById("generateAudio").disabled = false;
+
+            } catch (error) {
+                console.error("Error starting recording:", error);
+                alert("Error starting recording. Please make sure you have a microphone connected.");
+            }
+        }
+
+        function stopRecording() {
+            isRecording = false;
+            mediaRecorder.stop();
+
+            if (processor && input) {
+                processor.disconnect();
+                input.disconnect();
+                if (analyser) {
+                    analyser.disconnect();
+                }
+                if (audioContext) {
+                    audioContext.close();
+                }
+            }
+
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({ isFinal: true }));
+            }
+
+            document.getElementById("startRecording").disabled = false;
+            document.getElementById("stopRecording").disabled = true;
+            document.body.classList.remove('recording');
+            clearInterval(timerInterval);
+        }
+
+        async function generateAudio() {
+            try {
+                // Add loading state
+                const buttonContainer = document.querySelector('#generateAudio').parentElement;
+                buttonContainer.classList.add('loading');
+
+                const query = encodeURIComponent(transcriptionText);
+                const response = await fetch(`/stream-audio/?query=${query}`);
+
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                const audioBlob = await response.blob();
+                const audioURL = URL.createObjectURL(audioBlob);
+                document.getElementById('audioPlayer').src = audioURL;
+                document.getElementById("chatgpt_audio").style.display = "block";
+                document.getElementById("queryText").innerHTML = `<strong>Query:</strong> ${transcriptionText}`;
+                const audioPlayer = document.getElementById('audioPlayer');
+                audioPlayer.load();
+                audioPlayer.play();
+            } catch (error) {
+                console.error('Error generating audio:', error);
+                alert('Failed to generate audio response. Please try again.');
+            } finally {
+                // Remove loading state
+                const buttonContainer = document.querySelector('#generateAudio').parentElement;
+                buttonContainer.classList.remove('loading');
+            }
+        }
+
+        // Initialize on page load
+        initWebSocket();
+        initVisualizer();
+    </script>
+</body>
+
+</html>
