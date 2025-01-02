@@ -75,7 +75,7 @@ async def chatgpt_send_to_websocket(websocket, user_query: str):
         messages=[
             {
                 "role": "system",
-                "content": "You are a helpful assistant. Please assist the user with their query.",
+                "content": "You are a helpful assistant. Please assist the user with their query. Please make the response within two lines",
             },
             {
                 "role": "user",
@@ -92,7 +92,6 @@ async def chatgpt_send_to_websocket(websocket, user_query: str):
                 await websocket.send(
                     json.dumps({"text": chunk.choices[0].delta.content})
                 )
-                print("Sending chunk ", {"text": chunk.choices[0].delta.content})
         else:
             await websocket.send(json.dumps({"text": ""}))
             print("End of audio stream")
@@ -115,10 +114,10 @@ async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
                         "use_speaker_boost": False,
                     },
                     "generation_config": {
-                        "chunk_length_schedule": [90, 120, 160, 250, 290]
+                        "chunk_length_schedule": [120, 160, 250, 290],
+                        "flush": True,
                     },
                     "xi_api_key": ELEVENLABS_API_KEY,
-                    # "flush": True,
                 }
             )
         )
@@ -383,35 +382,12 @@ async def listen_raw(websocket: WebSocket) -> AsyncGenerator[bytes, None]:
             break
 
 
-def transcribe_audio(model: whisper.Whisper, audio_data: np.ndarray) -> str:
-    """
-    Transcribe audio data using Whisper model.
-    """
-    try:
-        result = model.transcribe(audio_data)
-        # result = convert_audio_text(audio_data)
-        return result["text"].strip()
-    except Exception as e:
-        logger.error(f"Transcription error: {str(e)}")
-        return ""
-
-
 def convert_audio_text_ndarray(filename) -> str:
     try:
         with open(filename, "rb") as f:
             data = f.read()
             response = requests.post(API_URL, headers=headers, data=data)
         return response
-    except Exception as e:
-        logger.error(f"Transcription error: {str(e)}")
-        return ""
-
-
-def transcribe_audio_local(model: whisper.Whisper, audio_data: np.ndarray) -> str:
-    try:
-        result = model.transcribe(audio_data)
-        # result = convert_audio_text(audio_data)
-        return result["text"].strip()
     except Exception as e:
         logger.error(f"Transcription error: {str(e)}")
         return ""
@@ -537,134 +513,18 @@ async def audio_ws1(websocket: WebSocket):
         await websocket.close()
 
 
-@app.websocket("/ws/audio/1")
-async def audio_ws2(websocket: WebSocket):
-    await websocket.accept()
-    logger.info("Client connected")
-
-    # Load Whisper model
-    model = load_whisper_model(model_type="base")
-    audio_buffer = np.array([], dtype=np.float32)
-
-    try:
-        async for chunk_data in listen_numpy(websocket):
-            try:
-                # Append chunk to buffer
-                audio_buffer = np.concatenate([audio_buffer, chunk_data])
-
-                # Process when we have enough samples (1 second at 16kHz)
-                if len(audio_buffer) >= 16000:
-                    # Get transcription
-                    transcription = transcribe_audio_with_hf(audio_buffer)
-
-                    if transcription:
-                        await websocket.send_text(transcription)
-                        logger.info(f"Transcribed: {transcription}")
-
-                    # Keep a small overlap for continuity
-                    audio_buffer = audio_buffer[-4000:]  # Keep last 0.25 seconds
-
-            except Exception as e:
-                logger.error(f"Error processing chunk: {str(e)}")
-                continue
-
-    except WebSocketDisconnect:
-        logger.info("Client disconnected")
-    except Exception as e:
-        logger.error(f"WebSocket error: {str(e)}")
-    finally:
-        await websocket.close()
-
-
-@app.post("/transcribe/")
+@app.post("/askchatpt/")
 async def transcribe(file: UploadFile = File(...)):
-    # model = load_whisper_model(model_type="turbo")  # Load the Whisper model
-    # print(file)
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_file.write(await file.read())
         temp_file_path = temp_file.name
     transcription = convert_audio_text(temp_file_path)
-    print(transcription)
-    return {"transcription": transcription["text"]}
-
-
-@app.get("/stream-audio/")
-async def stream_audio(query: str):
-    """
-    Stream audio endpoint.
-    Query parameter: query (str) - The text query to convert to speech
-    """
+    print(transcription["text"])
     return StreamingResponse(
-        generate_audio_stream(query),
+        generate_audio_stream(transcription["text"]),
         media_type="audio/mpeg",
         headers={"Content-Disposition": "attachment; filename=audio_stream.mp3"},
     )
-
-
-@app.get("/stream-combined/")
-async def stream_combined(query: str):
-    """
-    Stream both text and audio using Server-Sent Events.
-    This allows real-time streaming of both content types.
-    """
-
-    async def event_generator():
-        # Start audio generation
-        uri = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
-
-        async with websockets.connect(uri) as websocket:
-            # Send initial configuration to ElevenLabs
-            await websocket.send(
-                json.dumps(
-                    {
-                        "text": " ",
-                        "voice_settings": {
-                            "stability": 0.5,
-                            "similarity_boost": 0.8,
-                            "use_speaker_boost": False,
-                        },
-                        "generation_config": {
-                            "chunk_length_schedule": [120, 160, 250, 290]
-                        },
-                        "xi_api_key": ELEVENLABS_API_KEY,
-                    }
-                )
-            )
-
-            # Create chat completion stream
-            chat_completion = client.chat.completions.create(
-                messages=[{"role": "user", "content": query}],
-                model="llama3-8b-8192",
-                stream=True,
-            )
-
-            for chunk in chat_completion:
-                if chunk.choices[0].delta.content:
-                    # Send text chunk
-                    text_data = chunk.choices[0].delta.content
-                    print(text_data)
-                    yield f"event: text\ndata: {json.dumps({'text': text_data})}\n\n"
-
-                    # Send to ElevenLabs
-                    await websocket.send(json.dumps({"text": text_data}))
-
-                    # Get audio chunk if available
-            while True:
-                try:
-                    message = await websocket.recv()
-                    data = json.loads(message)
-                    if data.get("audio"):
-                        audio_chunk = base64.b64decode(data["audio"])
-                        # Send audio chunk encoded in base64
-                        yield f"event: audio\ndata: {json.dumps({'audio': base64.b64encode(audio_chunk).decode()})}\n\n"
-                    elif data.get("isFinal"):
-                        break
-                except websockets.exceptions.ConnectionClosed as e:
-                    break
-            # Send completion event
-            yield f"event: complete\ndata: {json.dumps({'status': 'complete'})}\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 # Serve HTML UI for recording and transmitting audio
@@ -673,14 +533,9 @@ async def get(request: Request):
     return templates.TemplateResponse("app.html", {"request": request})
 
 
-@app.get("/appv2")
+@app.get("/appv3")
 async def get(request: Request):
-    return templates.TemplateResponse("appv2.html", {"request": request})
-
-
-@app.get("/newapp")
-async def get(request: Request):
-    return templates.TemplateResponse("newapp.html", {"request": request})
+    return templates.TemplateResponse("appv3.html", {"request": request})
 
 
 # Serve HTML UI for recording and transmitting audio
