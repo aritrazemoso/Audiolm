@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Chat with Voice</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container py-5">
+        <h1 class="text-center mb-4">Real-time Voice Chat</h1>
+
+        <!-- Recording Controls -->
+        <div class="d-flex justify-content-center mb-4">
+            <button id="startRecording" class="btn btn-primary me-2">Start Recording</button>
+            <button id="stopRecording" class="btn btn-danger" disabled>Stop Recording</button>
+        </div>
+
+        <!-- Status Indicator -->
+        <div id="statusIndicator" class="text-center mb-4" style="display: none;">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Processing...</span>
+            </div>
+            <p class="mt-2">Processing your request...</p>
+        </div>
+
+        <!-- Transcription and Response Display -->
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title">Your Speech</h5>
+                        <div id="transcription" class="bg-light p-3 rounded"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card mb-4">
+                    <div class="card-body">
+                        <h5 class="card-title">Assistant's Response</h5>
+                        <div id="chatResponse" class="bg-light p-3 rounded"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Audio Player -->
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Assistant's Voice</h5>
+                <audio id="audioPlayer" controls class="w-100">
+                    <source type="audio/mpeg">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let websocket;
+        let audioQueue = [];
+        let isPlaying = false;
+
+        const startRecording = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                // Reset displays
+                document.getElementById('transcription').textContent = '';
+                document.getElementById('chatResponse').textContent = '';
+                document.getElementById('statusIndicator').style.display = 'none';
+
+                // Initialize WebSocket connection
+                websocket = new WebSocket(`ws://${window.location.host}/ws/chat`);
+
+                websocket.onmessage = handleWebSocketMessage;
+                websocket.onclose = () => console.log('WebSocket closed');
+                websocket.onerror = (error) => console.error('WebSocket error:', error);
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            const base64Audio = reader.result.split(',')[1];
+                            websocket.send(JSON.stringify({
+                                audio: base64Audio
+                            }));
+                        };
+                        reader.readAsDataURL(event.data);
+                    }
+                };
+
+                mediaRecorder.start(100); // Capture in 100ms chunks
+                document.getElementById('startRecording').disabled = true;
+                document.getElementById('stopRecording').disabled = false;
+
+            } catch (error) {
+                console.error('Error starting recording:', error);
+            }
+        };
+
+        const stopRecording = () => {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+
+                // Show processing indicator
+                document.getElementById('statusIndicator').style.display = 'block';
+
+                // Send final signal
+                websocket.send(JSON.stringify({ isFinal: true }));
+
+                document.getElementById('startRecording').disabled = false;
+                document.getElementById('stopRecording').disabled = true;
+            }
+        };
+
+        const handleWebSocketMessage = async (event) => {
+            const data = JSON.parse(event.data);
+
+            switch (data.type) {
+                case 'transcription':
+                    document.getElementById('transcription').textContent = data.text;
+                    break;
+
+                case 'chat_response':
+                    document.getElementById('statusIndicator').style.display = 'none';
+                    const chatResponse = document.getElementById('chatResponse');
+                    chatResponse.textContent += data.text;
+                    break;
+
+                case 'audio':
+                    audioQueue.push(data.data);
+                    if (!isPlaying) {
+                        playNextAudioChunk();
+                    }
+                    break;
+            }
+        };
+
+        const playNextAudioChunk = async () => {
+            if (audioQueue.length === 0) {
+                isPlaying = false;
+                return;
+            }
+
+            isPlaying = true;
+            const chunk = audioQueue.shift();
+            const audioBlob = new Blob(
+                [Uint8Array.from(atob(chunk), c => c.charCodeAt(0))],
+                { type: 'audio/mpeg' }
+            );
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = document.getElementById('audioPlayer');
+
+            audio.src = audioUrl;
+            audio.onended = () => {
+                URL.revokeObjectURL(audioUrl);
+                playNextAudioChunk();
+            };
+            await audio.play();
+        };
+
+        // Event listeners
+        document.getElementById('startRecording').addEventListener('click', startRecording);
+        document.getElementById('stopRecording').addEventListener('click', stopRecording);
+    </script>
+</body>
+
+</html>

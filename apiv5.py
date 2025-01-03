@@ -1,6 +1,10 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request
 import whisper
+import torch
+import io
 from fastapi.responses import HTMLResponse, StreamingResponse
+from pydub import AudioSegment
+from io import BytesIO
 import base64
 from fastapi.templating import Jinja2Templates
 import tempfile
@@ -71,7 +75,7 @@ async def chatgpt_send_to_websocket(websocket, user_query: str):
         messages=[
             {
                 "role": "system",
-                "content": "You are a helpful assistant. Please assist the user with their query.",
+                "content": "You are a helpful assistant. Please assist the user with their query. Please make the response within two lines",
             },
             {
                 "role": "user",
@@ -88,7 +92,6 @@ async def chatgpt_send_to_websocket(websocket, user_query: str):
                 await websocket.send(
                     json.dumps({"text": chunk.choices[0].delta.content})
                 )
-                print("Sending chunk ", {"text": chunk.choices[0].delta.content})
         else:
             await websocket.send(json.dumps({"text": ""}))
             print("End of audio stream")
@@ -111,10 +114,10 @@ async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
                         "use_speaker_boost": False,
                     },
                     "generation_config": {
-                        "chunk_length_schedule": [90, 120, 160, 250, 290]
+                        "chunk_length_schedule": [120, 160, 250, 290],
+                        "flush": True,
                     },
                     "xi_api_key": ELEVENLABS_API_KEY,
-                    # "flush": True,
                 }
             )
         )
@@ -379,19 +382,6 @@ async def listen_raw(websocket: WebSocket) -> AsyncGenerator[bytes, None]:
             break
 
 
-def transcribe_audio(model: whisper.Whisper, audio_data: np.ndarray) -> str:
-    """
-    Transcribe audio data using Whisper model.
-    """
-    try:
-        result = model.transcribe(audio_data)
-        # result = convert_audio_text(audio_data)
-        return result["text"].strip()
-    except Exception as e:
-        logger.error(f"Transcription error: {str(e)}")
-        return ""
-
-
 def convert_audio_text_ndarray(filename) -> str:
     try:
         with open(filename, "rb") as f:
@@ -400,40 +390,6 @@ def convert_audio_text_ndarray(filename) -> str:
         return response
     except Exception as e:
         logger.error(f"Transcription error: {str(e)}")
-        return ""
-
-
-def convert_audio_text_groq(filename) -> str:
-
-    try:
-        audio_file = open(filename, "rb")
-        transcription = client.audio.transcriptions.create(
-            model="distil-whisper-large-v3-en", file=audio_file, temperature=0
-        )
-        return transcription.text
-    except Exception as e:
-        logger.error(f"Transcription error: {str(e)}")
-        return ""
-
-
-def transcribe_audio_with_groq(audio_data: np.ndarray) -> str:
-    """
-    Transcribe audio data using Hugging Face Whisper API.
-    """
-    try:
-        start = time()
-        # Preprocess the audio for better quality
-        audio_data = preprocess_audio(audio_data)
-
-        flac_file_path = save_audio_to_flac(audio_data)
-
-        # Send the audio to the Hugging Face API
-        res = convert_audio_text_groq(flac_file_path)
-        end = time()
-        logger.info(f"Transcribe time: {end-start}")
-        return res
-    except Exception as e:
-        logger.error(f"HF transcription error: {str(e)}")
         return ""
 
 
@@ -482,7 +438,7 @@ def remove_overlap(prev, new):
 @app.websocket("/ws/audio")
 async def audio_ws1(websocket: WebSocket):
     await websocket.accept()
-    logger.info(msg="Client connected")
+    logger.info("Client connected")
 
     # Initialize audio debugger
     debugger = AudioDebugger(debug_folder="debug_audio")
@@ -494,9 +450,9 @@ async def audio_ws1(websocket: WebSocket):
 
     SAMPLE_RATE = 44100
     BYTES_PER_SAMPLE = 4  # 32-bit = 4 bytes
-    SECONDS_TO_BUFFER = 1
+    SECONDS_TO_BUFFER = 2
     BUFFER_SIZE = SAMPLE_RATE * BYTES_PER_SAMPLE * SECONDS_TO_BUFFER
-    OVERLAP_SIZE = int(SAMPLE_RATE * BYTES_PER_SAMPLE * 0.1)  # 0.5 seconds overlap
+    OVERLAP_SIZE = int(SAMPLE_RATE * BYTES_PER_SAMPLE * 0.5)  # 0.5 seconds overlap
 
     try:
         async for chunk_data in listen_raw(websocket):
@@ -531,7 +487,7 @@ async def audio_ws1(websocket: WebSocket):
                                 audio_np, sample_rate=SAMPLE_RATE, prefix="transcribed"
                             )
 
-                            transcription = transcribe_audio_with_groq(audio_np)
+                            transcription = transcribe_audio_with_hf(audio_np)
 
                             # if prevTranscription:
                             #     transcription = remove_overlap(
@@ -542,9 +498,8 @@ async def audio_ws1(websocket: WebSocket):
                             await websocket.send_text(transcription)
                             logger.info(f"Transcribed: {transcription}")
 
-                        # Keep 0.1 seconds overlap
+                        # Keep 0.5 seconds overlap
                         audio_buffer = audio_buffer[-OVERLAP_SIZE:]
-                        # audio_buffer = b""
 
             except Exception as e:
                 logger.error(f"Error processing chunk: {str(e)}")
@@ -558,55 +513,147 @@ async def audio_ws1(websocket: WebSocket):
         await websocket.close()
 
 
-@app.websocket("/ws/audio/1")
-async def audio_ws2(websocket: WebSocket):
+@app.websocket("/ws/chat")
+async def chat_ws(websocket: WebSocket):
     await websocket.accept()
-    logger.info("Client connected")
+    logger.info("Client connected to chat websocket")
 
-    # Load Whisper model
-    model = load_whisper_model(model_type="base")
-    audio_buffer = np.array([], dtype=np.float32)
+    # Initialize audio debugger
+    debugger = AudioDebugger(debug_folder="debug_chat_audio")
+    debugger.start_new_session()
+
+    # Initialize buffer for 2 seconds of audio
+    audio_buffer = b""
+    full_transcription = ""
+
+    SAMPLE_RATE = 44100
+    BYTES_PER_SAMPLE = 4  # 32-bit = 4 bytes
+    SECONDS_TO_BUFFER = 2
+    BUFFER_SIZE = SAMPLE_RATE * BYTES_PER_SAMPLE * SECONDS_TO_BUFFER
+    OVERLAP_SIZE = int(SAMPLE_RATE * BYTES_PER_SAMPLE * 0.5)  # 0.5 seconds overlap
 
     try:
-        async for chunk_data in listen_numpy(websocket):
+        async for chunk_data in listen_raw(websocket):
             try:
-                # Append chunk to buffer
-                audio_buffer = np.concatenate([audio_buffer, chunk_data])
+                if isinstance(chunk_data, dict) and chunk_data.get("isFinal"):
+                    # User has finished recording, now process with ChatGPT
+                    if full_transcription:
+                        # Get ChatGPT response
+                        chat_completion = client.chat.completions.create(
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": "You are a helpful assistant. Please assist the user with their query. Please make the response within two lines",
+                                },
+                                {
+                                    "role": "user",
+                                    "content": full_transcription,
+                                },
+                            ],
+                            model="llama3-8b-8192",
+                            stream=True,
+                        )
 
-                # Process when we have enough samples (1 second at 16kHz)
-                if len(audio_buffer) >= 16000:
-                    # Get transcription
-                    transcription = transcribe_audio_with_hf(audio_buffer)
+                        # Stream ChatGPT response
+                        for chunk in chat_completion:
+                            if chunk.choices[0].delta.content is not None:
+                                if chunk.choices[0].delta.content != "":
+                                    await websocket.send_json(
+                                        {
+                                            "type": "chat_response",
+                                            "text": chunk.choices[0].delta.content,
+                                        }
+                                    )
 
-                    if transcription:
-                        await websocket.send_text(transcription)
-                        logger.info(f"Transcribed: {transcription}")
+                        # Generate and stream audio response
+                        async for audio_chunk in generate_audio_stream(
+                            full_transcription
+                        ):
+                            await websocket.send_json(
+                                {
+                                    "type": "audio",
+                                    "data": base64.b64encode(audio_chunk).decode(
+                                        "utf-8"
+                                    ),
+                                }
+                            )
+                    continue
 
-                    # Keep a small overlap for continuity
-                    audio_buffer = audio_buffer[-4000:]  # Keep last 0.25 seconds
+                if chunk_data:
+                    audio_buffer += chunk_data
+
+                    # Process when buffer reaches 2 seconds of audio
+                    if len(audio_buffer) >= BUFFER_SIZE:
+                        audio_np = (
+                            np.frombuffer(audio_buffer, dtype=np.int32).astype(
+                                np.float32
+                            )
+                            / 2147483648.0  # 2^31 for 32-bit normalization
+                        )
+
+                        # Check for valid audio with sufficient volume and signal
+                        if (
+                            np.abs(audio_np).mean() > 0.0005
+                            and np.max(np.abs(audio_np)) > 0.01
+                        ):
+                            # Get transcription
+                            transcription = transcribe_audio_with_hf(audio_np)
+
+                            if transcription:
+                                # Accumulate transcription
+                                full_transcription += " " + transcription
+
+                                # Send transcription to client
+                                await websocket.send_json(
+                                    {
+                                        "type": "transcription",
+                                        "text": full_transcription,
+                                    }
+                                )
+
+                        # Keep 0.5 seconds overlap
+                        audio_buffer = audio_buffer[-OVERLAP_SIZE:]
 
             except Exception as e:
                 logger.error(f"Error processing chunk: {str(e)}")
                 continue
 
     except WebSocketDisconnect:
-        logger.info("Client disconnected")
+        logger.info("Client disconnected from chat websocket")
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
     finally:
         await websocket.close()
 
 
-@app.post("/transcribe/")
+@app.post("/askchatpt/")
 async def transcribe(file: UploadFile = File(...)):
-    # model = load_whisper_model(model_type="turbo")  # Load the Whisper model
-    # print(file)
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_file.write(await file.read())
         temp_file_path = temp_file.name
     transcription = convert_audio_text(temp_file_path)
-    print(transcription)
-    return {"transcription": transcription["text"]}
+    print(transcription["text"])
+    return StreamingResponse(
+        generate_audio_stream(transcription["text"]),
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": "attachment; filename=audio_stream.mp3"},
+    )
+
+
+# Serve HTML UI for recording and transmitting audio
+@app.get("/app")
+async def get(request: Request):
+    return templates.TemplateResponse("app.html", {"request": request})
+
+
+@app.get("/appv5")
+async def get(request: Request):
+    return templates.TemplateResponse("appv5.html", {"request": request})
+
+
+@app.get("/browser-transcription")
+async def get(request: Request):
+    return templates.TemplateResponse("broser-transcription.html", {"request": request})
 
 
 @app.get("/stream-audio/")
@@ -622,92 +669,10 @@ async def stream_audio(query: str):
     )
 
 
-@app.get("/stream-combined/")
-async def stream_combined(query: str):
-    """
-    Stream both text and audio using Server-Sent Events.
-    This allows real-time streaming of both content types.
-    """
-
-    async def event_generator():
-        # Start audio generation
-        uri = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
-
-        async with websockets.connect(uri) as websocket:
-            # Send initial configuration to ElevenLabs
-            await websocket.send(
-                json.dumps(
-                    {
-                        "text": " ",
-                        "voice_settings": {
-                            "stability": 0.5,
-                            "similarity_boost": 0.8,
-                            "use_speaker_boost": False,
-                        },
-                        "generation_config": {
-                            "chunk_length_schedule": [120, 160, 250, 290]
-                        },
-                        "xi_api_key": ELEVENLABS_API_KEY,
-                    }
-                )
-            )
-
-            # Create chat completion stream
-            chat_completion = client.chat.completions.create(
-                messages=[{"role": "user", "content": query}],
-                model="llama3-8b-8192",
-                stream=True,
-            )
-
-            for chunk in chat_completion:
-                if chunk.choices[0].delta.content:
-                    # Send text chunk
-                    text_data = chunk.choices[0].delta.content
-                    print(text_data)
-                    yield f"event: text\ndata: {json.dumps({'text': text_data})}\n\n"
-
-                    # Send to ElevenLabs
-                    await websocket.send(json.dumps({"text": text_data}))
-
-                    # Get audio chunk if available
-            while True:
-                try:
-                    message = await websocket.recv()
-                    data = json.loads(message)
-                    if data.get("audio"):
-                        audio_chunk = base64.b64decode(data["audio"])
-                        # Send audio chunk encoded in base64
-                        yield f"event: audio\ndata: {json.dumps({'audio': base64.b64encode(audio_chunk).decode()})}\n\n"
-                    elif data.get("isFinal"):
-                        break
-                except websockets.exceptions.ConnectionClosed as e:
-                    break
-            # Send completion event
-            yield f"event: complete\ndata: {json.dumps({'status': 'complete'})}\n\n"
-
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
-
-
-# Serve HTML UI for recording and transmitting audio
-@app.get("/app")
-async def get(request: Request):
-    return templates.TemplateResponse("app.html", {"request": request})
-
-
-@app.get("/appv2")
-async def get(request: Request):
-    return templates.TemplateResponse("appv2.html", {"request": request})
-
-
-@app.get("/newapp")
-async def get(request: Request):
-    return templates.TemplateResponse("newapp.html", {"request": request})
-
-
 # Serve HTML UI for recording and transmitting audio
 @app.get("/")
 async def get(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("local-transcription.html", {"request": request})
 
 
 if __name__ == "__main__":

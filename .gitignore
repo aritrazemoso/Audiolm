@@ -1,3 +1,4 @@
 venv
 *.env
 debug_audio
+whisper

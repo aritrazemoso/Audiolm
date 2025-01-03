@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Speech Transcription with TTS</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        #transcript {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            min-height: 100px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            margin-right: 10px;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+        }
+
+        #status {
+            margin-top: 10px;
+            color: #666;
+        }
+
+        audio {
+            width: 100%;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Speech to Text & Audio Response</h1>
+    <button id="startBtn">Start Recording</button>
+    <button id="endBtn" disabled>End Recording</button>
+    <div id="status">Ready to record</div>
+    <div id="transcript"></div>
+    <audio id="audioPlayer" controls style="display: none;"></audio>
+
+    <script>
+        const startBtn = document.getElementById('startBtn');
+        const endBtn = document.getElementById('endBtn');
+        const status = document.getElementById('status');
+        const transcript = document.getElementById('transcript');
+        const audioPlayer = document.getElementById('audioPlayer');
+
+        let recognition = null;
+        let finalText = '';
+
+        function initRecognition() {
+            recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                finalText = '';
+
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcriptText = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalText += transcriptText + ' ';
+                    } else {
+                        interimTranscript += transcriptText;
+                    }
+                }
+
+                transcript.innerHTML = finalText +
+                    (interimTranscript ? '<span style="color: gray;">' + interimTranscript + '</span>' : '');
+            };
+
+            recognition.onend = async () => {
+                // When recognition ends naturally, immediately make the API call
+                if (endBtn.disabled === false) { // Only if we haven't manually ended it
+                    await getAudioResponse();
+                }
+            };
+        }
+
+        async function getAudioResponse() {
+            if (!finalText.trim()) {
+                status.textContent = 'No speech detected';
+                return;
+            }
+
+            try {
+                status.textContent = 'Getting audio response...';
+                endBtn.disabled = true;
+                startBtn.disabled = false;
+
+                const response = await fetch(`/stream-audio/?query=${encodeURIComponent(finalText.trim())}`);
+
+                if (!response.ok) throw new Error('API call failed');
+
+                const audioBlob = await response.blob();
+                const audioUrl = URL.createObjectURL(audioBlob);
+
+                audioPlayer.src = audioUrl;
+                audioPlayer.style.display = 'block';
+                await audioPlayer.play();
+
+                status.textContent = 'Audio response received';
+            } catch (error) {
+                status.textContent = 'Error: ' + error.message;
+                console.error('API Error:', error);
+            }
+        }
+
+        startBtn.onclick = () => {
+            if (!recognition) initRecognition();
+
+            recognition.start();
+            startBtn.disabled = true;
+            endBtn.disabled = false;
+            status.textContent = 'Recording...';
+            audioPlayer.style.display = 'none';
+            transcript.textContent = '';
+            finalText = '';
+        };
+
+        endBtn.onclick = async () => {
+            console.log('End button clicked');
+            await getAudioResponse(); // Immediate API call when user clicks end
+            if (recognition) {
+                recognition.stop();
+            }
+            endBtn.disabled = true;
+            startBtn.disabled = false;
+        };
+
+        // Initialize on load
+        initRecognition();
+    </script>
+</body>
+
+</html>

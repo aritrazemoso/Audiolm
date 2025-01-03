@@ -4,164 +4,302 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Audio Recording UI</title>
-    <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <title>Voice Assistant</title>
+    <!-- Preload critical resources -->
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css"
+        as="style">
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" as="style">
+
+    <!-- Load CSS with media queries -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css" rel="stylesheet"
+        media="print" onload="this.media='all'">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+        media="print" onload="this.media='all'">
+
+    <!-- Critical CSS inlined -->
+    <style>
+        /* Critical styles that should load first */
+        .recording-container {
+            max-width: 800px;
+            margin: 0 auto;
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.3s ease-in;
+        }
+
+        .recording-container.loaded {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        /* Deferred non-critical styles */
+        @media (prefers-reduced-motion: no-preference) {
+            .wave-animation {
+                height: 60px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 4px;
+            }
+
+            .wave-bar {
+                width: 4px;
+                height: 20px;
+                background-color: #0d6efd;
+                border-radius: 2px;
+                animation: wave 1s ease-in-out infinite;
+                will-change: height;
+            }
+
+            @keyframes wave {
+
+                0%,
+                100% {
+                    height: 20px;
+                }
+
+                50% {
+                    height: 40px;
+                }
+            }
+
+            .record-button {
+                width: 80px;
+                height: 80px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 24px;
+                transition: transform 0.3s ease;
+                will-change: transform;
+            }
+
+            .record-button:hover {
+                transform: scale(1.05);
+            }
+        }
+
+        /* Static styles */
+        .audio-player {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .status-badge {
+            font-size: 0.9rem;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+        }
+    </style>
 </head>
 
 <body>
     <div class="container py-5">
-        <h1 class="text-center mb-4">Audio Recording and Transcription</h1>
+        <div id="recordingContainer" class="recording-container">
+            <!-- Content remains the same as before -->
+            <h1 class="text-center mb-4">Voice Assistant</h1>
+            <p class="text-center text-muted mb-5">Ask a question and get an AI-generated response</p>
 
-        <!-- Recording Buttons -->
-        <div class="d-flex justify-content-center mb-4">
-            <button id="startRecording" class="btn btn-primary me-2" onclick="startRecording()">Start Recording</button>
-            <button id="stopRecording" class="btn btn-danger" onclick="stopRecording()" disabled>Stop Recording</button>
-        </div>
-
-        <!-- Recording Skeleton -->
-        <div id="recordingSkeleton" class="text-center py-5" style="display: none;">
-            <div class="spinner-border text-primary" role="status">
-                <span class="visually-hidden">Recording...</span>
+            <div class="text-center mb-4">
+                <span id="statusBadge" class="status-badge badge bg-secondary">
+                    <i class="fas fa-microphone-slash me-2"></i>Ready to Record
+                </span>
             </div>
-            <p class="mt-3">Recording in progress...</p>
-        </div>
 
-        <!-- Recorded Audio Section -->
-        <div class="card mb-4" id="recordedAudioContainer" style="display: none;">
-            <div class="card-body">
-                <h5 class="card-title">Recorded Audio</h5>
+            <div class="d-flex justify-content-center mb-4">
+                <button id="recordButton" class="record-button btn btn-danger">
+                    <i class="fas fa-microphone"></i>
+                </button>
+            </div>
+
+            <div class="text-center mb-4">
+                <span id="timer" class="timer">00:00</span>
+            </div>
+
+            <div id="waveAnimation" class="wave-animation mb-4" style="display: none;">
+                <div class="wave-bar"></div>
+                <div class="wave-bar" style="animation-delay: 0.1s"></div>
+                <div class="wave-bar" style="animation-delay: 0.2s"></div>
+                <div class="wave-bar" style="animation-delay: 0.3s"></div>
+                <div class="wave-bar" style="animation-delay: 0.4s"></div>
+            </div>
+
+            <div id="recordedAudioContainer" class="audio-player mb-4" style="display: none;">
+                <h5 class="mb-3">Your Question</h5>
                 <audio id="recordedAudioPlayer" controls class="w-100">
                     <source id="recordedAudioSource" type="audio/wav">
-                    Your browser does not support the audio element.
                 </audio>
             </div>
-        </div>
 
-        <!-- Skeleton for Transcription -->
-        <div id="transcriptionSkeleton" class="bg-light p-3 rounded mb-4" style="display: none;">
-            <div class="placeholder-glow">
-                <span class="placeholder col-12"></span>
-                <span class="placeholder col-10"></span>
-                <span class="placeholder col-8"></span>
-            </div>
-        </div>
-
-        <!-- Transcription Section
-        <div class="card mb-4">
-            <div class="card-body">
-                <h5 class="card-title">Transcription</h5>
-                <pre id="transcription" class="bg-light p-3 rounded"></pre>
-                <button id="generateAudio" class="btn btn-success mt-3" onclick="generateAudio()" disabled>Ask
-                    Chatgpt</button>
-            </div>
-        </div> -->
-
-        <!-- Query and Generated Audio Section -->
-        <div class="card" id="audioContainer" style="display: block;">
-            <div class="card-body">
-                <div id="timeTake" class="mb-3"><strong>Time take:</strong></div>
+            <div id="audioContainer" class="audio-player" style="display: none;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="mb-0">AI Response</h5>
+                    <div id="timeTake" class="text-muted"></div>
+                </div>
                 <audio id="audioPlayer" controls class="w-100">
                     <source id="audioSource" type="audio/mpeg">
-                    Your browser does not support the audio element.
                 </audio>
+            </div>
+
+            <div id="loadingState" class="text-center py-4" style="display: none;">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Processing...</span>
+                </div>
+                <p class="mt-3">Processing your question...</p>
             </div>
         </div>
     </div>
 
-    <!-- Bootstrap JS and dependencies -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Deferred script loading -->
+    <script defer src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
 
-    <!-- JavaScript -->
     <script>
-        let mediaRecorder;
-        let audioChunks = [];
-        let isRecording = false;
-        let transcriptionText = "";
+        // Performance optimized JavaScript
+        document.addEventListener('DOMContentLoaded', () => {
+            // Cache DOM elements
+            const elements = {
+                recordButton: document.getElementById('recordButton'),
+                statusBadge: document.getElementById('statusBadge'),
+                timer: document.getElementById('timer'),
+                waveAnimation: document.getElementById('waveAnimation'),
+                recordedAudioContainer: document.getElementById('recordedAudioContainer'),
+                audioContainer: document.getElementById('audioContainer'),
+                loadingState: document.getElementById('loadingState'),
+                timeTake: document.getElementById('timeTake'),
+                recordingContainer: document.getElementById('recordingContainer')
+            };
 
-        function startRecording() {
-            navigator.mediaDevices.getUserMedia({ audio: true })
-                .then(stream => {
-                    mediaRecorder = new MediaRecorder(stream);
-                    audioChunks = [];
+            // Show container with fade-in effect
+            elements.recordingContainer.classList.add('loaded');
 
-                    mediaRecorder.ondataavailable = event => {
-                        audioChunks.push(event.data);
-                    };
+            // Initialize recording state
+            const state = {
+                mediaRecorder: null,
+                audioChunks: [],
+                isRecording: false,
+                timerInterval: null,
+                startTime: null
+            };
 
-                    mediaRecorder.onstop = () => {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                        const audioURL = URL.createObjectURL(audioBlob);
+            // Throttled timer update function
+            const updateTimer = () => {
+                if (!state.startTime) return;
 
-                        const recordedAudioPlayer = document.getElementById('recordedAudioPlayer');
-                        const recordedAudioSource = document.getElementById('recordedAudioSource');
-                        recordedAudioSource.src = audioURL;
-                        recordedAudioPlayer.load();
+                const now = Date.now();
+                const diff = now - state.startTime;
+                const seconds = Math.floor(diff / 1000);
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
 
-                        document.getElementById('recordedAudioContainer').style.display = 'block';
-                        document.getElementById('recordingSkeleton').style.display = 'none';
-
-                        const formData = new FormData();
-                        formData.append('file', audioBlob, 'recorded_audio.wav');
-
-                        document.getElementById('transcriptionSkeleton').style.display = 'block';
-
-                        startTime = Date.now();
-                        fetch('/askchatpt/', {
-                            method: 'POST',
-                            body: formData
-                        })
-                            .then(response => response.blob())
-                            .then(data => {
-                                const endTime = Date.now();
-                                const timeTake = (endTime - startTime) / 1000;
-                                document.getElementById('timeTake').textContent = `Time take: ${timeTake} seconds`;
-                                document.getElementById('audioContainer').style.display = 'block';
-                                const audioPlayer = document.getElementById('audioPlayer');
-                                const audioSource = document.getElementById('audioSource');
-                                const audioURL = URL.createObjectURL(data);
-                                audioSource.src = audioURL;
-                                audioPlayer.load();
-                                audioPlayer.play();
-                                document.getElementById('transcriptionSkeleton').style.display = 'none';
-                            })
-                            .catch(error => {
-                                console.error("Error during transcription:", error);
-                                document.getElementById('transcriptionSkeleton').style.display = 'none';
-                            });
-                    };
-
-                    mediaRecorder.start();
-                    document.getElementById("startRecording").disabled = true;
-                    document.getElementById("stopRecording").disabled = false;
-                    document.getElementById('recordingSkeleton').style.display = 'block';
+                requestAnimationFrame(() => {
+                    elements.timer.textContent =
+                        `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
                 });
-            isRecording = true;
-        }
+            };
 
-        function stopRecording() {
-            if (mediaRecorder && isRecording) {
-                mediaRecorder.stop();
-                document.getElementById("startRecording").disabled = false;
-                document.getElementById("stopRecording").disabled = true;
-                document.getElementById('recordingSkeleton').style.display = 'none';
-            }
-        }
+            // Optimized event handlers
+            const startRecording = async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    state.mediaRecorder = new MediaRecorder(stream);
+                    state.audioChunks = [];
 
-        function generateAudio() {
-            const query = encodeURIComponent(transcriptionText);
-            fetch(`/stream-audio/?query=${query}`)
-                .then(response => response.blob())
-                .then(audioBlob => {
+                    state.mediaRecorder.ondataavailable = event => {
+                        state.audioChunks.push(event.data);
+                    };
+
+                    state.mediaRecorder.onstop = handleRecordingStop;
+
+                    state.mediaRecorder.start();
+                    state.isRecording = true;
+                    state.startTime = Date.now();
+                    state.timerInterval = setInterval(updateTimer, 1000);
+
+                    // Update UI
+                    elements.recordButton.innerHTML = '<i class="fas fa-stop"></i>';
+                    elements.recordButton.classList.add('recording');
+                    elements.statusBadge.className = 'status-badge badge bg-danger';
+                    elements.statusBadge.innerHTML = '<i class="fas fa-microphone me-2"></i>Recording';
+                    elements.waveAnimation.style.display = 'flex';
+                } catch (error) {
+                    console.error('Error accessing microphone:', error);
+                    alert('Unable to access microphone. Please check your permissions.');
+                }
+            };
+
+            const stopRecording = () => {
+                if (state.mediaRecorder && state.isRecording) {
+                    state.mediaRecorder.stop();
+                    state.isRecording = false;
+                    clearInterval(state.timerInterval);
+
+                    elements.recordButton.innerHTML = '<i class="fas fa-microphone"></i>';
+                    elements.recordButton.classList.remove('recording');
+                    elements.statusBadge.className = 'status-badge badge bg-secondary';
+                    elements.statusBadge.innerHTML = '<i class="fas fa-microphone-slash me-2"></i>Ready to Record';
+                }
+            };
+
+            // Handle recording stop and audio processing
+            const handleRecordingStop = async () => {
+                const audioBlob = new Blob(state.audioChunks, { type: 'audio/wav' });
+                const audioURL = URL.createObjectURL(audioBlob);
+
+                // Update recorded audio player
+                const recordedAudioPlayer = document.getElementById('recordedAudioPlayer');
+                const recordedAudioSource = document.getElementById('recordedAudioSource');
+                recordedAudioSource.src = audioURL;
+                recordedAudioPlayer.load();
+
+                elements.recordedAudioContainer.style.display = 'block';
+                elements.waveAnimation.style.display = 'none';
+                elements.loadingState.style.display = 'block';
+
+                try {
+                    const formData = new FormData();
+                    formData.append('file', audioBlob, 'recorded_audio.wav');
+
+                    const processStartTime = Date.now();
+                    const response = await fetch('/askchatpt/', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const responseBlob = await response.blob();
+                    const processTime = ((Date.now() - processStartTime) / 1000).toFixed(1);
+
+                    elements.timeTake.textContent = `Processing time: ${processTime}s`;
+                    elements.audioContainer.style.display = 'block';
+                    elements.loadingState.style.display = 'none';
+
                     const audioPlayer = document.getElementById('audioPlayer');
                     const audioSource = document.getElementById('audioSource');
-                    const audioURL = URL.createObjectURL(audioBlob);
-                    audioSource.src = audioURL;
+                    const responseURL = URL.createObjectURL(responseBlob);
+                    audioSource.src = responseURL;
                     audioPlayer.load();
                     audioPlayer.play();
-                })
-                .catch(error => console.error("Error generating audio:", error));
-        }
+
+                    // Cleanup
+                    URL.revokeObjectURL(audioURL);
+                } catch (error) {
+                    console.error("Error processing audio:", error);
+                    elements.loadingState.style.display = 'none';
+                    alert('An error occurred while processing your request. Please try again.');
+                }
+            };
+
+            // Event listeners
+            elements.recordButton.addEventListener('click', () => {
+                if (!state.isRecording) {
+                    startRecording();
+                } else {
+                    stopRecording();
+                }
+            });
+        });
     </script>
 </body>
 

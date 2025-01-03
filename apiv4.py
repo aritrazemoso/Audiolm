@@ -25,6 +25,7 @@ from pathlib import Path
 import wave
 from time import time
 import noisereduce as nr
+from asyncio import Queue
 
 import requests
 
@@ -53,23 +54,25 @@ client = OpenAI(
 )
 
 
-async def listen(websocket) -> AsyncGenerator[bytes, None]:
-    """Listen to the websocket for audio data and stream it."""
+async def listen(websocket, audio_queue: Queue) -> None:
+    """Listen to the websocket for audio data and put it in queue."""
     while True:
         try:
             message = await websocket.recv()
             data = json.loads(message)
             if data.get("audio"):
-                yield base64.b64decode(data["audio"])
+                await audio_queue.put(base64.b64decode(data["audio"]))
             elif data.get("isFinal"):
+                await audio_queue.put(None)  # Signal end of stream
                 break
         except websockets.exceptions.ConnectionClosed as e:
             print("Connection closed")
             print(e)
+            await audio_queue.put(None)  # Signal end of stream
             break
 
 
-async def chatgpt_send_to_websocket(websocket, user_query: str):
+async def chatgpt_send_to_websocket(websocket, user_query: str) -> None:
     """Send text chunks to websocket from ChatGPT response."""
     chat_completion = client.chat.completions.create(
         messages=[
@@ -86,20 +89,23 @@ async def chatgpt_send_to_websocket(websocket, user_query: str):
         stream=True,
     )
 
-    for chunk in chat_completion:
-        if chunk.choices[0].delta.content is not None:
-            if chunk.choices[0].delta.content != "":
-                await websocket.send(
-                    json.dumps({"text": chunk.choices[0].delta.content})
-                )
-        else:
-            await websocket.send(json.dumps({"text": ""}))
-            print("End of audio stream")
-    return "Complete"
+    try:
+        for chunk in chat_completion:
+            if chunk.choices[0].delta.content is not None:
+                if chunk.choices[0].delta.content != "":
+                    await websocket.send(
+                        json.dumps({"text": chunk.choices[0].delta.content})
+                    )
+            else:
+                await websocket.send(json.dumps({"text": ""}))
+                print("End of text stream")
+    except Exception as e:
+        print(f"Error sending text: {e}")
+        await websocket.send(json.dumps({"text": ""}))
 
 
 async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
-    """Generate audio stream from text."""
+    """Generate audio stream from text with concurrent send/receive."""
     uri = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
 
     async with websockets.connect(uri) as websocket:
@@ -114,7 +120,7 @@ async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
                         "use_speaker_boost": False,
                     },
                     "generation_config": {
-                        "chunk_length_schedule": [120, 160, 250, 290],
+                        # "chunk_length_schedule": [120, 160, 250, 290],
                         "flush": True,
                     },
                     "xi_api_key": ELEVENLABS_API_KEY,
@@ -122,16 +128,24 @@ async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
             )
         )
 
-        # Create task for sending text
+        # Create queue for audio chunks
+        audio_queue = Queue()
+
+        # Create concurrent tasks
+        listen_task = asyncio.create_task(listen(websocket, audio_queue))
         send_task = asyncio.create_task(
             chatgpt_send_to_websocket(websocket, user_query)
         )
 
-        # Stream audio chunks
-        async for chunk in listen(websocket):
+        # Stream audio chunks from queue
+        while True:
+            chunk = await audio_queue.get()
+            if chunk is None:  # End of stream
+                break
             yield chunk
 
-        await send_task
+        # Wait for both tasks to complete
+        await asyncio.gather(listen_task, send_task)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -393,6 +407,18 @@ def convert_audio_text_ndarray(filename) -> str:
         return ""
 
 
+def convert_audio_text_groq(filename) -> str:
+
+    try:
+        transcription = client.audio.transcriptions.create(
+            model="whisper-large-v3", file=filename
+        )
+        return transcription.text
+    except Exception as e:
+        logger.error(f"Transcription error: {str(e)}")
+        return ""
+
+
 def transcribe_audio_with_hf(audio_data: np.ndarray) -> str:
     """
     Transcribe audio data using Hugging Face Whisper API.
@@ -405,7 +431,7 @@ def transcribe_audio_with_hf(audio_data: np.ndarray) -> str:
         flac_file_path = save_audio_to_flac(audio_data)
 
         # Send the audio to the Hugging Face API
-        response = convert_audio_text_ndarray(flac_file_path)
+        response = convert_audio_text_groq(flac_file_path)
 
         if response.status_code == 200:
             result = response.json()
@@ -518,8 +544,11 @@ async def transcribe(file: UploadFile = File(...)):
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_file.write(await file.read())
         temp_file_path = temp_file.name
+    start = time()
     transcription = convert_audio_text(temp_file_path)
     print(transcription["text"])
+    end = time()
+    logger.info(f"Transcribe time: {end-start}")
     return StreamingResponse(
         generate_audio_stream(transcription["text"]),
         media_type="audio/mpeg",

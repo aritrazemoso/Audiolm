@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-time Speech Transcription</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        #transcript {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            min-height: 200px;
+            white-space: pre-wrap;
+        }
+
+        #status {
+            margin-top: 10px;
+            color: #666;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .interim {
+            color: gray;
+            font-style: italic;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Real-time Speech Transcription</h1>
+    <button id="startButton">Start Recording</button>
+    <button id="stopButton" disabled>Stop Recording</button>
+    <div id="status">Status: Not recording</div>
+    <div id="transcript"></div>
+
+    <script>
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const statusDiv = document.getElementById('status');
+        const transcriptDiv = document.getElementById('transcript');
+
+        let recognition = null;
+        let isRecording = false;
+
+        function initializeSpeechRecognition() {
+            // Check browser support
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                alert('Your browser does not support speech recognition. Please try Chrome or Edge.');
+                startButton.disabled = true;
+                return;
+            }
+
+            // Initialize recognition object
+            recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'en-US';
+
+            // Handle results
+            recognition.onresult = (event) => {
+                let finalTranscript = '';
+                let interimTranscript = '';
+
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript + '\n';
+                    } else {
+                        interimTranscript += transcript;
+                    }
+                }
+
+                // Update transcript display
+                transcriptDiv.innerHTML = finalTranscript +
+                    (interimTranscript ? '<span class="interim">' + interimTranscript + '</span>' : '');
+                transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+            };
+
+            // Handle errors
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error:', event.error);
+                statusDiv.textContent = `Error: ${event.error}`;
+                stopRecording();
+            };
+
+            // Handle end of recognition
+            recognition.onend = () => {
+                if (isRecording) {
+                    recognition.start();
+                }
+            };
+        }
+
+        function startRecording() {
+            if (!recognition) {
+                initializeSpeechRecognition();
+            }
+
+            recognition.start();
+            isRecording = true;
+            startButton.disabled = true;
+            stopButton.disabled = false;
+            statusDiv.textContent = 'Status: Recording...';
+        }
+
+        function stopRecording() {
+            if (recognition) {
+                recognition.stop();
+            }
+            isRecording = false;
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            statusDiv.textContent = 'Status: Not recording';
+        }
+
+        startButton.addEventListener('click', startRecording);
+        stopButton.addEventListener('click', stopRecording);
+
+        // Initialize on page load
+        initializeSpeechRecognition();
+    </script>
+</body>
+
+</html>
