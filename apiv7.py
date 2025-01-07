@@ -1,10 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request
+from fastapi.staticfiles import StaticFiles
 import whisper
-import torch
-import io
-from fastapi.responses import HTMLResponse, StreamingResponse
-from pydub import AudioSegment
-from io import BytesIO
+from fastapi.responses import StreamingResponse
 import base64
 from fastapi.templating import Jinja2Templates
 import tempfile
@@ -31,13 +28,12 @@ from deepgram import (
     PrerecordedOptions,
     FileSource,
 )
+from configs.ServerWebSocketHandler import WebSocketHandler
 
 
 import requests
 
-# API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3-turbo"
-API_URL = "https://api-inference.huggingface.co/models/openai/whisper-base.en"
-# API_URL = "https://api-inference.huggingface.co/models/openai/whisper-medium.en"
+API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3-turbo"
 headers = {"Authorization": "Bearer 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"}
 
 
@@ -162,6 +158,8 @@ app = FastAPI()
 
 # Set up the Jinja2 template renderer
 templates = Jinja2Templates(directory="templates")
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 def load_whisper_model(model_type: str = "base"):
@@ -468,82 +466,14 @@ def remove_overlap(prev, new):
     return new
 
 
+websocketHandler = WebSocketHandler()
+
+
 @app.websocket("/ws/audio")
 async def audio_ws1(websocket: WebSocket):
     await websocket.accept()
     logger.info("Client connected")
-
-    # Initialize audio debugger
-    debugger = AudioDebugger(debug_folder="debug_audio")
-    debugger.start_new_session()
-
-    # Initialize buffer for 2 seconds of audio
-    audio_buffer = b""
-    prevTranscription = None
-
-    SAMPLE_RATE = 44100
-    BYTES_PER_SAMPLE = 4  # 32-bit = 4 bytes
-    SECONDS_TO_BUFFER = 2
-    BUFFER_SIZE = SAMPLE_RATE * BYTES_PER_SAMPLE * SECONDS_TO_BUFFER
-    OVERLAP_SIZE = int(SAMPLE_RATE * BYTES_PER_SAMPLE * 0.5)  # 0.5 seconds overlap
-
-    try:
-        async for chunk_data in listen_raw(websocket):
-            try:
-                if chunk_data:
-                    # Save raw incoming chunks for debugging
-                    # debugger.save_raw_bytes(chunk_data, sample_rate=SAMPLE_RATE)
-
-                    audio_buffer += chunk_data
-
-                    # Process when buffer reaches 2 seconds of audio
-                    if len(audio_buffer) >= BUFFER_SIZE:
-                        audio_np = (
-                            np.frombuffer(audio_buffer, dtype=np.int32).astype(
-                                np.float32
-                            )
-                            / 2147483648.0  # 2^31 for 32-bit normalization
-                        )
-
-                        # Save the processed numpy array for debugging
-                        debugger.save_audio_chunk(
-                            audio_np, sample_rate=SAMPLE_RATE, prefix="processed"
-                        )
-
-                        # Check for valid audio with sufficient volume and signal
-                        if (
-                            np.abs(audio_np).mean() > 0.0005
-                            and np.max(np.abs(audio_np)) > 0.01
-                        ):
-                            # Save the valid audio chunk that will be transcribed
-                            debugger.save_audio_chunk(
-                                audio_np, sample_rate=SAMPLE_RATE, prefix="transcribed"
-                            )
-
-                            transcription = transcribe_audio_with_hf(audio_np)
-
-                            # if prevTranscription:
-                            #     transcription = remove_overlap(
-                            #         prevTranscription, transcription
-                            #     )
-                            # prevTranscription = transcription
-
-                            await websocket.send_text(transcription)
-                            logger.info(f"Transcribed: {transcription}")
-
-                        # Keep 0.5 seconds overlap
-                        audio_buffer = audio_buffer[-OVERLAP_SIZE:]
-
-            except Exception as e:
-                logger.error(f"Error processing chunk: {str(e)}")
-                continue
-
-    except WebSocketDisconnect:
-        logger.info("Client disconnected")
-    except Exception as e:
-        logger.error(f"WebSocket error: {str(e)}")
-    finally:
-        await websocket.close()
+    await websocketHandler.handle_websocket(websocket)
 
 
 deepgram = DeepgramClient(os.getenv("DEEPGRAM_API_KEY"))
@@ -601,15 +531,10 @@ async def get(request: Request):
     return templates.TemplateResponse("app.html", {"request": request})
 
 
-@app.get("/appv3")
-async def get(request: Request):
-    return templates.TemplateResponse("appv3.html", {"request": request})
-
-
 # Serve HTML UI for recording and transmitting audio
 @app.get("/")
 async def get(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse("appv7.html", {"request": request})
 
 
 if __name__ == "__main__":

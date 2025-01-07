@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Audio Stream to WebSocket Server</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <script defer src='static/utils.js'></script>
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+
+        .transcription-box {
+            height: 200px;
+            overflow-y: auto;
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+        }
+
+        .status-badge {
+            font-size: 0.875rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container py-5">
+        <div class="row justify-content-center">
+            <div class="col-lg-10">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-primary text-white">
+                        <h4 class="mb-0">Transcribe Audio Stream with Huggingface VAD + Whisper</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">WebSocket Address</label>
+                                <input type="text" class="form-control" id="websocketAddress"
+                                    value="ws://localhost:8000/ws/audio">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Buffering Strategy</label>
+                                <select class="form-select" id="bufferingStrategySelect">
+                                    <option value="silence_at_end_of_chunk" selected>Silence at End of Chunk</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-4" id="silence_at_end_of_chunk_options_panel">
+                            <div class="col-md-6">
+                                <label class="form-label">Chunk Length (s)</label>
+                                <input type="number" class="form-control" id="chunk_length_seconds" value="3" min="1">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Silence at End of Chunk (s)</label>
+                                <input type="number" class="form-control" id="chunk_offset_seconds" value="0.1" min="0">
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Language</label>
+                                <select class="form-select" id="languageSelect">
+                                    <option value="multilingual">Multilingual</option>
+                                    <option value="english">English</option>
+                                    <option value="italian">Italian</option>
+                                    <option value="spanish">Spanish</option>
+                                    <option value="french">French</option>
+                                    <option value="german">German</option>
+                                    <option value="chinese">Chinese</option>
+                                    <option value="arabic">Arabic</option>
+                                    <option value="portuguese">Portuguese</option>
+                                    <option value="russian">Russian</option>
+                                    <option value="japanese">Japanese</option>
+                                    <option value="dutch">Dutch</option>
+                                    <option value="korean">Korean</option>
+                                    <option value="hindi">Hindi</option>
+                                    <option value="turkish">Turkish</option>
+                                    <option value="swedish">Swedish</option>
+                                    <option value="norwegian">Norwegian</option>
+                                    <option value="danish">Danish</option>
+                                    <option value="polish">Polish</option>
+                                    <option value="finnish">Finnish</option>
+                                    <option value="thai">Thai</option>
+                                    <option value="czech">Czech</option>
+                                    <option value="hungarian">Hungarian</option>
+                                    <option value="greek">Greek</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <button id="connectButton" class="btn btn-primary me-2">Connect</button>
+                                <button id="startButton" class="btn btn-success me-2" disabled>Start Streaming</button>
+                                <button id="stopButton" class="btn btn-danger" disabled>Stop Streaming</button>
+                            </div>
+                        </div>
+
+                        <div class="transcription-box p-3 mb-4" id="transcription"></div>
+
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <div class="d-flex align-items-center">
+                                    <span class="me-2">WebSocket:</span>
+                                    <span class="badge bg-secondary status-badge" id="webSocketStatus">Not
+                                        Connected</span>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="d-flex align-items-center">
+                                    <span class="me-2">Detected Language:</span>
+                                    <span class="badge bg-info status-badge" id="detected_language">Undefined</span>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="d-flex align-items-center">
+                                    <span class="me-2">Last Processing Time:</span>
+                                    <span class="badge bg-info status-badge" id="processing_time">Undefined</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

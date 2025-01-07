@@ -12,7 +12,7 @@ import os
 import asyncio
 from openai import OpenAI
 from dotenv import load_dotenv
-from typing import AsyncGenerator
+from typing import AsyncGenerator, List, Tuple
 import websockets
 import json
 from scipy import signal
@@ -20,11 +20,14 @@ import base64
 import numpy as np
 import logging
 import soundfile as sf
+from pyannote.audio import Model
+from pyannote.audio.pipelines import VoiceActivityDetection
 import datetime
 from pathlib import Path
 import wave
 from time import time
 import noisereduce as nr
+from faster_whisper import WhisperModel
 
 import requests
 
@@ -75,7 +78,7 @@ async def chatgpt_send_to_websocket(websocket, user_query: str):
         messages=[
             {
                 "role": "system",
-                "content": "You are a helpful assistant. Please assist the user with their query. Please make the response within two lines",
+                "content": "You are a helpful assistant. Please assist the user with their query.",
             },
             {
                 "role": "user",
@@ -92,6 +95,7 @@ async def chatgpt_send_to_websocket(websocket, user_query: str):
                 await websocket.send(
                     json.dumps({"text": chunk.choices[0].delta.content})
                 )
+                print("Sending chunk ", {"text": chunk.choices[0].delta.content})
         else:
             await websocket.send(json.dumps({"text": ""}))
             print("End of audio stream")
@@ -114,10 +118,10 @@ async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
                         "use_speaker_boost": False,
                     },
                     "generation_config": {
-                        "chunk_length_schedule": [120, 160, 250, 290],
-                        "flush": True,
+                        "chunk_length_schedule": [90, 120, 160, 250, 290]
                     },
                     "xi_api_key": ELEVENLABS_API_KEY,
+                    # "flush": True,
                 }
             )
         )
@@ -382,12 +386,74 @@ async def listen_raw(websocket: WebSocket) -> AsyncGenerator[bytes, None]:
             break
 
 
+def transcribe_audio(model: whisper.Whisper, audio_data: np.ndarray) -> str:
+    """
+    Transcribe audio data using Whisper model.
+    """
+    try:
+        result = model.transcribe(audio_data)
+        # result = convert_audio_text(audio_data)
+        return result["text"].strip()
+    except Exception as e:
+        logger.error(f"Transcription error: {str(e)}")
+        return ""
+
+
 def convert_audio_text_ndarray(filename) -> str:
     try:
         with open(filename, "rb") as f:
             data = f.read()
             response = requests.post(API_URL, headers=headers, data=data)
         return response
+    except Exception as e:
+        logger.error(f"Transcription error: {str(e)}")
+        return ""
+
+
+def convert_audio_text_groq(filename) -> str:
+
+    try:
+        audio_file = open(filename, "rb")
+        transcription = client.audio.transcriptions.create(
+            model="distil-whisper-large-v3-en", file=audio_file, temperature=0
+        )
+        return transcription.text
+    except Exception as e:
+        logger.error(f"Transcription error: {str(e)}")
+        return ""
+
+
+def transcribe_audio_with_groq(audio_data: np.ndarray) -> str:
+    """
+    Transcribe audio data using Hugging Face Whisper API.
+    """
+    try:
+        start = time()
+        # Preprocess the audio for better quality
+        audio_data = preprocess_audio(audio_data)
+
+        flac_file_path = save_audio_to_flac(audio_data)
+
+        # Send the audio to the Hugging Face API
+        res = convert_audio_text_groq(flac_file_path)
+        end = time()
+        logger.info(f"Transcribe time: {end-start}")
+        return res
+    except Exception as e:
+        logger.error(f"HF transcription error: {str(e)}")
+        return ""
+
+
+model_size = "tiny"
+
+
+def transcribe_audio_local(
+    audio_data: np.ndarray,
+    model: whisper.Whisper = whisper.load_model(model_size),
+) -> str:
+    try:
+        result = model.transcribe(audio_data)
+        return result["text"].strip()
     except Exception as e:
         logger.error(f"Transcription error: {str(e)}")
         return ""
@@ -435,71 +501,203 @@ def remove_overlap(prev, new):
     return new
 
 
+class AudioChunker:
+    def __init__(
+        self,
+        access_token: str,
+        sample_rate: int = 44100,
+        min_chunk_duration: float = 1.0,
+        max_chunk_duration: float = 5.0,
+        min_speech_duration: float = 0.5,
+    ):
+        """
+        Initialize the VAD-based audio chunker.
+
+        Args:
+            access_token: HuggingFace access token for pyannote
+            sample_rate: Audio sample rate
+            min_chunk_duration: Minimum duration of audio chunk to process
+            max_chunk_duration: Maximum duration of audio chunk
+            min_speech_duration: Minimum duration of speech to consider
+        """
+        self.sample_rate = sample_rate
+        self.min_chunk_duration = min_chunk_duration
+        self.max_chunk_duration = max_chunk_duration
+        self.min_speech_duration = min_speech_duration
+
+        # Initialize VAD pipeline
+        model = Model.from_pretrained(
+            "pyannote/voice-activity-detection", use_auth_token=access_token
+        )
+        self.vad = VoiceActivityDetection(segmentation=model)
+
+        # Move to GPU if available
+        if torch.cuda.is_available():
+            self.vad = self.vad.to(torch.device("cuda"))
+
+    def find_speech_regions(self, audio_np: np.ndarray) -> List[Tuple[float, float]]:
+        """
+        Find regions containing speech in the audio.
+
+        Args:
+            audio_np: Audio data as numpy array
+
+        Returns:
+            List of (start_time, end_time) tuples in seconds
+        """
+        # Ensure audio is float32 and normalized
+        if audio_np.dtype != np.float32:
+            audio_np = audio_np.astype(np.float32)
+        if np.max(np.abs(audio_np)) > 1.0:
+            audio_np = audio_np / np.max(np.abs(audio_np))
+
+        # Run VAD
+        vad_results = self.vad(
+            {
+                "waveform": torch.from_numpy(audio_np).unsqueeze(0),
+                "sample_rate": self.sample_rate,
+            }
+        )
+
+        # Extract speech segments
+        speech_regions = []
+        for speech_segment in vad_results.get_timeline().support():
+            start_time = speech_segment.start
+            end_time = speech_segment.end
+
+            # Only include segments longer than minimum duration
+            if end_time - start_time >= self.min_speech_duration:
+                speech_regions.append((start_time, end_time))
+
+        return speech_regions
+
+    def get_chunk_regions(
+        self, speech_regions: List[Tuple[float, float]], audio_duration: float
+    ) -> List[Tuple[float, float]]:
+        """
+        Convert speech regions into chunk regions, ensuring minimum and maximum durations.
+        """
+        if not speech_regions:
+            return []
+
+        chunk_regions = []
+        current_start = speech_regions[0][0]
+        current_end = speech_regions[0][1]
+
+        for start, end in speech_regions[1:]:
+            # If gap between segments is small, merge them
+            if start - current_end < 0.5:  # 500ms gap threshold
+                current_end = end
+            else:
+                # If current chunk is long enough, add it
+                if current_end - current_start >= self.min_chunk_duration:
+                    chunk_regions.append((current_start, current_end))
+                current_start = start
+                current_end = end
+
+            # If chunk exceeds max duration, split it
+            if current_end - current_start > self.max_chunk_duration:
+                chunk_regions.append(
+                    (current_start, current_start + self.max_chunk_duration)
+                )
+                current_start = current_start + self.max_chunk_duration
+
+        # Add final chunk if it's long enough
+        if current_end - current_start >= self.min_chunk_duration:
+            chunk_regions.append((current_start, current_end))
+
+        return chunk_regions
+
+
 @app.websocket("/ws/audio")
 async def audio_ws1(websocket: WebSocket):
     await websocket.accept()
-    logger.info("Client connected")
+    logger.info(msg="Client connected")
 
     # Initialize audio debugger
     debugger = AudioDebugger(debug_folder="debug_audio")
     debugger.start_new_session()
 
-    # Initialize buffer for 2 seconds of audio
-    audio_buffer = b""
-    prevTranscription = None
+    # Initialize chunker with your HuggingFace token
+    chunker = AudioChunker(
+        access_token=os.environ["HUGGINGFACE_API_KEY"],
+        sample_rate=44100,
+        min_chunk_duration=1.0,
+        max_chunk_duration=5.0,
+        min_speech_duration=0.5,
+    )
 
-    SAMPLE_RATE = 44100
+    # Initialize buffer
+    audio_buffer = b""
     BYTES_PER_SAMPLE = 4  # 32-bit = 4 bytes
-    SECONDS_TO_BUFFER = 2
-    BUFFER_SIZE = SAMPLE_RATE * BYTES_PER_SAMPLE * SECONDS_TO_BUFFER
-    OVERLAP_SIZE = int(SAMPLE_RATE * BYTES_PER_SAMPLE * 0.5)  # 0.5 seconds overlap
+    MIN_BUFFER_SIZE = int(
+        chunker.sample_rate * BYTES_PER_SAMPLE * chunker.min_chunk_duration
+    )
 
     try:
         async for chunk_data in listen_raw(websocket):
             try:
                 if chunk_data:
-                    # Save raw incoming chunks for debugging
-                    # debugger.save_raw_bytes(chunk_data, sample_rate=SAMPLE_RATE)
-
                     audio_buffer += chunk_data
 
-                    # Process when buffer reaches 2 seconds of audio
-                    if len(audio_buffer) >= BUFFER_SIZE:
+                    # Process when we have enough data
+                    if len(audio_buffer) >= MIN_BUFFER_SIZE:
+                        # Convert to numpy array
                         audio_np = (
                             np.frombuffer(audio_buffer, dtype=np.int32).astype(
                                 np.float32
                             )
-                            / 2147483648.0  # 2^31 for 32-bit normalization
+                            / 2147483648.0
                         )
 
-                        # Save the processed numpy array for debugging
-                        debugger.save_audio_chunk(
-                            audio_np, sample_rate=SAMPLE_RATE, prefix="processed"
+                        # Find speech regions
+                        speech_regions = chunker.find_speech_regions(audio_np)
+
+                        # Get optimal chunk regions
+                        chunk_regions = chunker.get_chunk_regions(
+                            speech_regions, len(audio_np) / chunker.sample_rate
                         )
 
-                        # Check for valid audio with sufficient volume and signal
-                        if (
-                            np.abs(audio_np).mean() > 0.0005
-                            and np.max(np.abs(audio_np)) > 0.01
-                        ):
-                            # Save the valid audio chunk that will be transcribed
+                        # Process each chunk
+                        for start_time, end_time in chunk_regions:
+                            # Convert time to samples
+                            start_sample = int(start_time * chunker.sample_rate)
+                            end_sample = int(end_time * chunker.sample_rate)
+
+                            # Extract chunk
+                            chunk_np = audio_np[start_sample:end_sample]
+
+                            # Save for debugging
                             debugger.save_audio_chunk(
-                                audio_np, sample_rate=SAMPLE_RATE, prefix="transcribed"
+                                chunk_np,
+                                sample_rate=chunker.sample_rate,
+                                prefix="transcribed",
                             )
 
-                            transcription = transcribe_audio_with_hf(audio_np)
+                            # Transcribe
+                            transcription = transcribe_audio_local(chunk_np)
 
-                            # if prevTranscription:
-                            #     transcription = remove_overlap(
-                            #         prevTranscription, transcription
-                            #     )
-                            # prevTranscription = transcription
+                            if transcription:
+                                await websocket.send_text(transcription)
+                                logger.info(f"Transcribed: {transcription}")
 
-                            await websocket.send_text(transcription)
-                            logger.info(f"Transcribed: {transcription}")
+                        # Keep unprocessed audio
+                        if chunk_regions:
+                            last_end_sample = int(
+                                chunk_regions[-1][1] * chunker.sample_rate
+                            )
+                            audio_buffer = audio_buffer[
+                                last_end_sample * BYTES_PER_SAMPLE :
+                            ]
 
-                        # Keep 0.5 seconds overlap
-                        audio_buffer = audio_buffer[-OVERLAP_SIZE:]
+                        # Prevent buffer from growing too large
+                        max_buffer_samples = int(
+                            chunker.max_chunk_duration * chunker.sample_rate
+                        )
+                        if len(audio_buffer) > max_buffer_samples * BYTES_PER_SAMPLE:
+                            audio_buffer = audio_buffer[
+                                -max_buffer_samples * BYTES_PER_SAMPLE :
+                            ]
 
             except Exception as e:
                 logger.error(f"Error processing chunk: {str(e)}")
@@ -511,149 +709,6 @@ async def audio_ws1(websocket: WebSocket):
         logger.error(f"WebSocket error: {str(e)}")
     finally:
         await websocket.close()
-
-
-@app.websocket("/ws/chat")
-async def chat_ws(websocket: WebSocket):
-    await websocket.accept()
-    logger.info("Client connected to chat websocket")
-
-    # Initialize audio debugger
-    debugger = AudioDebugger(debug_folder="debug_chat_audio")
-    debugger.start_new_session()
-
-    # Initialize buffer for 2 seconds of audio
-    audio_buffer = b""
-    full_transcription = ""
-
-    SAMPLE_RATE = 44100
-    BYTES_PER_SAMPLE = 4  # 32-bit = 4 bytes
-    SECONDS_TO_BUFFER = 2
-    BUFFER_SIZE = SAMPLE_RATE * BYTES_PER_SAMPLE * SECONDS_TO_BUFFER
-    OVERLAP_SIZE = int(SAMPLE_RATE * BYTES_PER_SAMPLE * 0.5)  # 0.5 seconds overlap
-
-    try:
-        async for chunk_data in listen_raw(websocket):
-            try:
-                if isinstance(chunk_data, dict) and chunk_data.get("isFinal"):
-                    # User has finished recording, now process with ChatGPT
-                    if full_transcription:
-                        # Get ChatGPT response
-                        chat_completion = client.chat.completions.create(
-                            messages=[
-                                {
-                                    "role": "system",
-                                    "content": "You are a helpful assistant. Please assist the user with their query. Please make the response within two lines",
-                                },
-                                {
-                                    "role": "user",
-                                    "content": full_transcription,
-                                },
-                            ],
-                            model="llama3-8b-8192",
-                            stream=True,
-                        )
-
-                        # Stream ChatGPT response
-                        for chunk in chat_completion:
-                            if chunk.choices[0].delta.content is not None:
-                                if chunk.choices[0].delta.content != "":
-                                    await websocket.send_json(
-                                        {
-                                            "type": "chat_response",
-                                            "text": chunk.choices[0].delta.content,
-                                        }
-                                    )
-
-                        # Generate and stream audio response
-                        async for audio_chunk in generate_audio_stream(
-                            full_transcription
-                        ):
-                            await websocket.send_json(
-                                {
-                                    "type": "audio",
-                                    "data": base64.b64encode(audio_chunk).decode(
-                                        "utf-8"
-                                    ),
-                                }
-                            )
-                    continue
-
-                if chunk_data:
-                    audio_buffer += chunk_data
-
-                    # Process when buffer reaches 2 seconds of audio
-                    if len(audio_buffer) >= BUFFER_SIZE:
-                        audio_np = (
-                            np.frombuffer(audio_buffer, dtype=np.int32).astype(
-                                np.float32
-                            )
-                            / 2147483648.0  # 2^31 for 32-bit normalization
-                        )
-
-                        # Check for valid audio with sufficient volume and signal
-                        if (
-                            np.abs(audio_np).mean() > 0.0005
-                            and np.max(np.abs(audio_np)) > 0.01
-                        ):
-                            # Get transcription
-                            transcription = transcribe_audio_with_hf(audio_np)
-
-                            if transcription:
-                                # Accumulate transcription
-                                full_transcription += " " + transcription
-
-                                # Send transcription to client
-                                await websocket.send_json(
-                                    {
-                                        "type": "transcription",
-                                        "text": full_transcription,
-                                    }
-                                )
-
-                        # Keep 0.5 seconds overlap
-                        audio_buffer = audio_buffer[-OVERLAP_SIZE:]
-
-            except Exception as e:
-                logger.error(f"Error processing chunk: {str(e)}")
-                continue
-
-    except WebSocketDisconnect:
-        logger.info("Client disconnected from chat websocket")
-    except Exception as e:
-        logger.error(f"WebSocket error: {str(e)}")
-    finally:
-        await websocket.close()
-
-
-@app.post("/askchatpt/")
-async def transcribe(file: UploadFile = File(...)):
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_file.write(await file.read())
-        temp_file_path = temp_file.name
-    transcription = convert_audio_text(temp_file_path)
-    print(transcription["text"])
-    return StreamingResponse(
-        generate_audio_stream(transcription["text"]),
-        media_type="audio/mpeg",
-        headers={"Content-Disposition": "attachment; filename=audio_stream.mp3"},
-    )
-
-
-# Serve HTML UI for recording and transmitting audio
-@app.get("/app")
-async def get(request: Request):
-    return templates.TemplateResponse("app.html", {"request": request})
-
-
-@app.get("/appv5")
-async def get(request: Request):
-    return templates.TemplateResponse("appv5.html", {"request": request})
-
-
-@app.get("/browser-transcription")
-async def get(request: Request):
-    return templates.TemplateResponse("broser-transcription.html", {"request": request})
 
 
 @app.get("/stream-audio/")
@@ -669,10 +724,15 @@ async def stream_audio(query: str):
     )
 
 
+@app.get("/appv5")
+async def get(request: Request):
+    return templates.TemplateResponse("appv5.html", {"request": request})
+
+
 # Serve HTML UI for recording and transmitting audio
 @app.get("/")
 async def get(request: Request):
-    return templates.TemplateResponse("local-transcription.html", {"request": request})
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 if __name__ == "__main__":

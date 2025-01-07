@@ -1,6 +1,10 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Request
 import whisper
+import torch
+import io
 from fastapi.responses import HTMLResponse, StreamingResponse
+from pydub import AudioSegment
+from io import BytesIO
 import base64
 from fastapi.templating import Jinja2Templates
 import tempfile
@@ -21,6 +25,7 @@ from pathlib import Path
 import wave
 from time import time
 import noisereduce as nr
+from faster_whisper import WhisperModel
 
 import requests
 
@@ -365,7 +370,7 @@ async def listen_raw(websocket: WebSocket) -> AsyncGenerator[bytes, None]:
     while True:
         try:
             message = await websocket.receive_text()
-            data = json.loads(message)
+            data = json.loads(s=message)
 
             if data.get("audio"):
                 # Decode base64 audio data and yield raw bytes
@@ -434,6 +439,21 @@ def transcribe_audio_with_groq(audio_data: np.ndarray) -> str:
         return res
     except Exception as e:
         logger.error(f"HF transcription error: {str(e)}")
+        return ""
+
+
+model_size = "tiny"
+
+
+def transcribe_audio_local(
+    audio_data: np.ndarray,
+    model: whisper.Whisper = whisper.load_model(model_size),
+) -> str:
+    try:
+        result = model.transcribe(audio_data)
+        return result["text"].strip()
+    except Exception as e:
+        logger.error(f"Transcription error: {str(e)}")
         return ""
 
 
@@ -531,7 +551,7 @@ async def audio_ws1(websocket: WebSocket):
                                 audio_np, sample_rate=SAMPLE_RATE, prefix="transcribed"
                             )
 
-                            transcription = transcribe_audio_with_groq(audio_np)
+                            transcription = transcribe_audio_local(audio_np)
 
                             # if prevTranscription:
                             #     transcription = remove_overlap(

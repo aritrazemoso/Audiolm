@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Recording UI</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container py-5">
+        <h1 class="text-center mb-4">Audio Recording and Transcription</h1>
+
+        <!-- Recording Buttons -->
+        <div class="d-flex justify-content-center mb-4">
+            <button id="startRecording" class="btn btn-primary me-2" onclick="startRecording()">Start Recording</button>
+            <button id="stopRecording" class="btn btn-danger" onclick="stopRecording()" disabled>Stop Recording</button>
+        </div>
+
+        <!-- Recording Skeleton -->
+        <div id="recordingSkeleton" class="text-center py-5" style="display: none;">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Recording...</span>
+            </div>
+            <p class="mt-3">Recording in progress...</p>
+        </div>
+
+        <!-- Recorded Audio Section -->
+        <div class="card mb-4" id="recordedAudioContainer" style="display: none;">
+            <div class="card-body">
+                <h5 class="card-title">Recorded Audio</h5>
+                <audio id="recordedAudioPlayer" controls class="w-100">
+                    <source id="recordedAudioSource" type="audio/wav">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
+        </div>
+
+        <!-- Skeleton for Transcription -->
+        <div id="transcriptionSkeleton" class="bg-light p-3 rounded mb-4" style="display: none;">
+            <div class="placeholder-glow">
+                <span class="placeholder col-12"></span>
+                <span class="placeholder col-10"></span>
+                <span class="placeholder col-8"></span>
+            </div>
+        </div>
+
+        <!-- Transcription Section -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Transcription</h5>
+                <pre id="transcription" class="bg-light p-3 rounded"></pre>
+                <button id="generateAudio" class="btn btn-success mt-3" onclick="generateAudio()" disabled>Ask
+                    Chatgpt</button>
+            </div>
+        </div>
+
+        <!-- Query and Generated Audio Section -->
+        <div class="card" id="audioContainer" style="display: none;">
+            <div class="card-body">
+                <div id="queryText" class="mb-3"><strong>Query:</strong></div>
+                <audio id="audioPlayer" controls class="w-100">
+                    <source id="audioSource" type="audio/mpeg">
+                    Your browser does not support the audio element.
+                </audio>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS and dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- JavaScript -->
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+        let isRecording = false;
+        let transcriptionText = "";
+
+        function startRecording() {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+
+                    mediaRecorder.ondataavailable = event => {
+                        audioChunks.push(event.data);
+                    };
+
+                    mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                        const audioURL = URL.createObjectURL(audioBlob);
+
+                        const recordedAudioPlayer = document.getElementById('recordedAudioPlayer');
+                        const recordedAudioSource = document.getElementById('recordedAudioSource');
+                        recordedAudioSource.src = audioURL;
+                        recordedAudioPlayer.load();
+
+                        document.getElementById('recordedAudioContainer').style.display = 'block';
+                        document.getElementById('recordingSkeleton').style.display = 'none';
+
+                        const formData = new FormData();
+                        formData.append('file', audioBlob, 'recorded_audio.wav');
+
+                        document.getElementById('transcriptionSkeleton').style.display = 'block';
+
+                        fetch('/transcribe/', {
+                            method: 'POST',
+                            body: formData
+                        })
+                            .then(response => response.json())
+                            .then(data => {
+                                transcriptionText = data.transcription;
+                                document.getElementById('transcription').innerText = transcriptionText;
+                                document.getElementById('generateAudio').disabled = false;
+                                document.getElementById('queryText').innerText = 'Query: ' + transcriptionText;
+                                document.getElementById('audioContainer').style.display = 'block';
+                                document.getElementById('transcriptionSkeleton').style.display = 'none';
+                            })
+                            .catch(error => {
+                                console.error("Error during transcription:", error);
+                                document.getElementById('transcriptionSkeleton').style.display = 'none';
+                            });
+                    };
+
+                    mediaRecorder.start();
+                    document.getElementById("startRecording").disabled = true;
+                    document.getElementById("stopRecording").disabled = false;
+                    document.getElementById('recordingSkeleton').style.display = 'block';
+                });
+            isRecording = true;
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                document.getElementById("startRecording").disabled = false;
+                document.getElementById("stopRecording").disabled = true;
+                document.getElementById('recordingSkeleton').style.display = 'none';
+            }
+        }
+
+        function generateAudio() {
+            const query = encodeURIComponent(transcriptionText);
+            fetch(`/stream-audio/?query=${query}`)
+                .then(response => response.blob())
+                .then(audioBlob => {
+                    const audioPlayer = document.getElementById('audioPlayer');
+                    const audioSource = document.getElementById('audioSource');
+                    const audioURL = URL.createObjectURL(audioBlob);
+                    audioSource.src = audioURL;
+                    audioPlayer.load();
+                    audioPlayer.play();
+                })
+                .catch(error => console.error("Error generating audio:", error));
+        }
+    </script>
+</body>
+
+</html>
