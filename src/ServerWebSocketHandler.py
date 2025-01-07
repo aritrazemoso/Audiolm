@@ -8,6 +8,7 @@ import asyncio
 import websockets
 from fastapi import WebSocket
 import os
+from src.utils.ChatgptUtil import ChatGPTHandler
 
 from .WebsocketClient import Client
 from .vad.vad_factory import VADFactory
@@ -27,12 +28,13 @@ class WebSocketHandler:
         self.vad_pipeline = VADFactory.create_vad_pipeline(
             "silero", auth_token=os.environ["HUGGINGFACE_API_KEY"]
         )
-        self.asr_pipeline = ASRFactory.create_asr_pipeline("faster_whisper_docker")
+        self.asr_pipeline = ASRFactory.create_asr_pipeline("groq")
         self.sampling_rate = sampling_rate
         self.samples_width = samples_width
         self.connected_clients = {}
         self.transcriptions = {}
         self.processing_tasks = {}
+        self.chatgpt_handler = ChatGPTHandler(api_key=os.environ["GROQ_API_KEY"])
 
     async def handle_audio(self, client: Client, websocket: WebSocket):
         client_tasks = []
@@ -55,21 +57,32 @@ class WebSocketHandler:
                             f"Waiting for {len(client_tasks)} pending tasks to complete"
                         )
                         results = await asyncio.gather(*client_tasks)
+
                         logging.info("All processing tasks completed")
 
+                        full_text = " ".join(
+                            t["text"] for t in self.transcriptions[client.client_id]
+                        )
                         # Compile final transcription
                         final_transcription = {
                             "type": "final_transcription",
                             "client_id": client.client_id,
                             "transcriptions": self.transcriptions[client.client_id],
+                            "full_text": full_text,
                             "total_processing_time": sum(
                                 t.get("processing_time", 0)
                                 for t in self.transcriptions[client.client_id]
                             ),
                         }
-                        print(final_transcription)
+
                         # Send final transcription
                         # await websocket.send_text(json.dumps(final_transcription))
+                        await websocket.send_text(json.dumps(final_transcription))
+                        # await self.chatgpt_handler.ask_chatgpt(
+                        #     websocket,
+                        #     question=full_text,
+                        #     context="You are a helpful assistant. Please respond to the following transcribed speech.",
+                        # )
 
                     await websocket.close()
                     break

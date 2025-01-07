@@ -116,6 +116,7 @@ class SilenceAtEndOfChunk(BufferingStrategyInterface):
                     end = time.time()
                     transcription["processing_time"] = end - start
                     transcription["chunk_id"] = self.client.file_counter
+                    transcription["type"] = "chunk_transcription"
 
                     # Store transcription
                     transcriptions_list.append(transcription)
@@ -126,5 +127,7 @@ class SilenceAtEndOfChunk(BufferingStrategyInterface):
 
                 self.client.scratch_buffer.clear()
                 self.client.increment_file_counter()
+        except Exception as e:
+            print(e)
         finally:
             self.processing_flag = False

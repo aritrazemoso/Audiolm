@@ -10,6 +10,7 @@ let context;
 let processor;
 let globalStream;
 let isRecording = false;
+let stopTime = Date()
 
 const websocketAddress = document.querySelector('#websocketAddress');
 const selectedLanguage = document.querySelector('#languageSelect');
@@ -46,6 +47,35 @@ function resetWebsocketHandler() {
     connectButton.disabled = false;
 }
 
+async function generateAudio(query_text) {
+    try {
+        // Add loading state
+
+        const query = encodeURIComponent(query_text);
+        const response = await fetch(`/stream-audio/?query=${query}`);
+
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+
+        const audioBlob = await response.blob();
+        let endTime = Date.now();
+        const audioURL = URL.createObjectURL(audioBlob);
+        document.getElementById('audioPlayer').src = audioURL;
+        document.getElementById("chatgpt_audio").style.display = "block";
+        document.getElementById("queryText").innerHTML = `<strong>Query:</strong> ${query_text} Processing Time:${(endTime - stopTime) / 1000} seconds`;
+        const audioPlayer = document.getElementById('audioPlayer');
+        audioPlayer.load();
+        audioPlayer.play();
+    } catch (error) {
+        console.error('Error generating audio:', error);
+        alert('Failed to generate audio response. Please try again.');
+    } finally {
+        // Remove loading state
+        const buttonContainer = document.querySelector('#generateAudio').parentElement;
+        buttonContainer.classList.remove('loading');
+    }
+}
 function connectWebsocketHandler() {
     if (!websocketAddress.value) {
         console.log("WebSocket address is required.");
@@ -58,7 +88,7 @@ function connectWebsocketHandler() {
         websocketStatus.textContent = 'Connected';
         startButton.disabled = false;
         connectButton.disabled = true;
-        resetTranscription()
+        resetTranscription();
     };
     websocket.onclose = event => {
         console.log("WebSocket connection closed", event);
@@ -70,7 +100,18 @@ function connectWebsocketHandler() {
     websocket.onmessage = event => {
         console.log("Message from server:", event.data);
         const transcript_data = JSON.parse(event.data);
-        updateTranscription(transcript_data);
+        switch (transcript_data.type) {
+            case 'chunk_transcription':
+                updateTranscription(transcript_data);
+                break;
+            case 'final_transcription':
+                console.log("Final transcription:", transcript_data.full_text);
+                generateAudio(transcript_data.full_text);
+                break;
+            default:
+                break;
+
+        }
     };
 }
 
@@ -179,6 +220,7 @@ function stopRecordingHandler() {
 
     if (websocket && websocket.readyState === WebSocket.OPEN) {
         websocket.send(JSON.stringify({ isFinal: true }));
+        stopTime = Date.now();
     }
 
 

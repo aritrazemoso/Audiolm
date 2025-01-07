@@ -525,6 +525,19 @@ async def transcribe(file: UploadFile = File(...)):
     )
 
 
+@app.get("/stream-audio/")
+async def stream_audio(query: str):
+    """
+    Stream audio endpoint.
+    Query parameter: query (str) - The text query to convert to speech
+    """
+    return StreamingResponse(
+        generate_audio_stream(query),
+        media_type="audio/mpeg",
+        headers={"Content-Disposition": "attachment; filename=audio_stream.mp3"},
+    )
+
+
 # Serve HTML UI for recording and transmitting audio
 @app.get("/app")
 async def get(request: Request):
