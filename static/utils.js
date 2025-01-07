@@ -106,7 +106,7 @@ function connectWebsocketHandler() {
                 break;
             case 'final_transcription':
                 console.log("Final transcription:", transcript_data.full_text);
-                generateAudio(transcript_data.full_text);
+                // generateAudio(transcript_data.full_text);
                 break;
             default:
                 break;
@@ -211,7 +211,9 @@ async function setupRecordingWorkletNode() {
     );
 }
 
-stopButton.addEventListener("click", stopRecordingHandler);
+stopButton.addEventListener("click", () => {
+    setTimeout(stopRecordingHandler, 300)
+});
 
 function stopRecordingHandler() {
     console.log('Stop button clicked');

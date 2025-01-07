@@ -80,12 +80,15 @@ async def chatgpt_send_to_websocket(websocket, user_query: str) -> None:
     chat_completion = client.chat.completions.create(
         messages=[
             {
-                "role": "system",
-                "content": "You are a helpful assistant. Please assist the user with their query. Please make the response within two lines",
-            },
-            {
                 "role": "user",
-                "content": user_query,
+                "content": """
+                    You are a helpful assistant. Please assist the user with their query.
+                    Think that you are an voice assistant. 
+                    You need to give answer as short as possible.
+                    ```{user_query}```
+                    """.format(
+                    user_query=user_query
+                ),
             },
         ],
         model="llama3-8b-8192",
@@ -539,15 +542,14 @@ async def stream_audio(query: str):
 
 
 # Serve HTML UI for recording and transmitting audio
-@app.get("/app")
-async def get(request: Request):
-    return templates.TemplateResponse("app.html", {"request": request})
-
-
-# Serve HTML UI for recording and transmitting audio
 @app.get("/")
 async def get(request: Request):
     return templates.TemplateResponse("appv7.html", {"request": request})
+
+
+@app.get("/app")
+async def get(request: Request):
+    return templates.TemplateResponse("appv7_optimal.html", {"request": request})
 
 
 if __name__ == "__main__":

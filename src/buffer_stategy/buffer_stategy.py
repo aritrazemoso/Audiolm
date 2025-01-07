@@ -71,11 +71,11 @@ class SilenceAtEndOfChunk(BufferingStrategyInterface):
             * self.client.samples_width
         )
         if len(self.client.buffer) > chunk_length_in_bytes:
-            if self.processing_flag:
-                exit(
-                    "Error in realtime processing: tried processing a new "
-                    "chunk while the previous one was still being processed"
-                )
+            # if self.processing_flag:
+            #     exit(
+            #         "Error in realtime processing: tried processing a new "
+            #         "chunk while the previous one was still being processed"
+            #     )
 
             self.client.scratch_buffer += self.client.buffer
             self.client.buffer.clear()
@@ -98,6 +98,7 @@ class SilenceAtEndOfChunk(BufferingStrategyInterface):
         try:
             start = time.time()
             vad_results = await vad_pipeline.detect_activity(self.client)
+            print(vad_results)
 
             if len(vad_results) == 0:
                 self.client.scratch_buffer.clear()
