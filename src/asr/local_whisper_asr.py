@@ -3,7 +3,7 @@ import os
 import torch
 from transformers import pipeline
 
-from configs.util import save_audio_to_file
+from src.util import save_audio_to_file
 
 from .asr_interface import ASRInterface
 

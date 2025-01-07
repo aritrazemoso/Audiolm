@@ -1,4 +1,4 @@
-from configs.WebsocketClient import Client
+from src.WebsocketClient import Client
 
 
 class ASRInterface:

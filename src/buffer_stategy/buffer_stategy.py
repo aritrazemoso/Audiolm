@@ -7,7 +7,7 @@ from fastapi import WebSocket
 
 
 from .buffer_stategy_interface import BufferingStrategyInterface
-from configs.vad.vad_interface import VADInterface
+from src.vad.vad_interface import VADInterface
 
 
 class SilenceAtEndOfChunk(BufferingStrategyInterface):

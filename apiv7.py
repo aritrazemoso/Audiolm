@@ -28,7 +28,7 @@ from deepgram import (
     PrerecordedOptions,
     FileSource,
 )
-from configs.ServerWebSocketHandler import WebSocketHandler
+from src.ServerWebSocketHandler import WebSocketHandler
 
 
 import requests

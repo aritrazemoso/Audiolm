@@ -4,8 +4,8 @@ from os import remove
 from pyannote.audio import Model
 from pyannote.audio.pipelines import VoiceActivityDetection
 
-from configs.util import save_audio_to_file
-from configs.WebsocketClient import Client
+from src.util import save_audio_to_file
+from src.WebsocketClient import Client
 
 from .vad_interface import VADInterface
 

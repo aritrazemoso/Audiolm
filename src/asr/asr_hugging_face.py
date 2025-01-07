@@ -1,6 +1,6 @@
 import os
 from openai import AsyncOpenAI
-from configs.util import save_audio_to_file
+from src.util import save_audio_to_file
 from .asr_interface import ASRInterface
 from aiohttp import ClientSession
 

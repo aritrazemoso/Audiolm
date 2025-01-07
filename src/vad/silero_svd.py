@@ -1,8 +1,8 @@
 import torch
 import numpy as np
 from .vad_interface import VADInterface
-from configs.WebsocketClient import Client
-from configs.util import save_audio_to_file
+from src.WebsocketClient import Client
+from src.util import save_audio_to_file
 
 
 class SileroVAD(VADInterface):
