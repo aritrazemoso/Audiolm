@@ -23,6 +23,7 @@ class GroqASR(ASRInterface):
                 file=audio,
                 language=client.config.get("language"),
                 model="whisper-large-v3-turbo",
+                response_format="verbose_json",
             )
 
         os.remove(file_path)

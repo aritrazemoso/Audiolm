@@ -152,11 +152,16 @@ function updateTranscription(transcript_data) {
     }
 
     // Update the language information
-    if (transcript_data.language && transcript_data.language_probability) {
-        languageDiv.textContent = transcript_data.language + ' (' + transcript_data.language_probability.toFixed(2) + ')';
+    if (transcript_data.language) {
+        languageDiv.textContent = transcript_data.language;
     } else {
         languageDiv.textContent = 'Not Supported';
     }
+    // if (transcript_data.language && transcript_data.language_probability) {
+    //     languageDiv.textContent = transcript_data.language + ' (' + transcript_data.language_probability.toFixed(2) + ')';
+    // } else {
+    //     languageDiv.textContent = 'Not Supported';
+    // }
 
     // Update the processing time, if available
     if (transcript_data.processing_time) {

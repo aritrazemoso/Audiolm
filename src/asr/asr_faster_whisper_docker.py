@@ -24,6 +24,7 @@ class FasterWhisperDocker(ASRInterface):
                 file=audio,
                 language=client.config.get("language"),
                 model="Systran/faster-whisper-large-v3",
+                response_format="verbose_json",
             )
 
         os.remove(file_path)
