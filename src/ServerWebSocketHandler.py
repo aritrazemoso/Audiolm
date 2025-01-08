@@ -13,10 +13,17 @@ from src.utils.ChatgptUtil import ChatGPTHandler
 from .WebsocketClient import Client
 from .vad.vad_factory import VADFactory
 from .asr.asr_factory import ASRFactory
+from .utils.audio_stream_util import AudioStreamManager
+from .utils.chatgpt_util import ChatGPTClient
+from .utils.elevenlabs_util import ElevenLabsClient
 
 
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+
+voice_id = "pNInz6obpgDQGcFmaJgB"
+model_id = "eleven_turbo_v2_5"
 
 
 class WebSocketHandler:
@@ -35,6 +42,12 @@ class WebSocketHandler:
         self.transcriptions = {}
         self.processing_tasks = {}
         self.chatgpt_handler = ChatGPTHandler(api_key=os.environ["GROQ_API_KEY"])
+        self.elevenlabs_client = ElevenLabsClient(voice_id=voice_id, model_id=model_id)
+        self.chatgpt_client = ChatGPTClient()
+
+        self.audio_stream_manager = AudioStreamManager(
+            self.elevenlabs_client, self.chatgpt_client
+        )
 
     async def handle_audio(self, client: Client, websocket: WebSocket):
         client_tasks = []
@@ -78,6 +91,10 @@ class WebSocketHandler:
                         # Send final transcription
                         # await websocket.send_text(json.dumps(final_transcription))
                         await websocket.send_text(json.dumps(final_transcription))
+
+                        await self.audio_stream_manager.handle_stream(
+                            websocket, full_text
+                        )
                         # await self.chatgpt_handler.ask_chatgpt(
                         #     websocket,
                         #     question=full_text,

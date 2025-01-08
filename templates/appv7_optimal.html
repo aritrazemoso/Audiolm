@@ -147,22 +147,20 @@
                     <div class="card-body">
                         <h5 class="card-title" id="transcription-title">Transcription</h5>
                         <div id="transcription" class="transcription-box"></div>
-                        <div class="d-flex align-items-center">
-                            <button id="generateAudio" class="btn btn-success" onclick="generateAudio()" disabled>
-                                Ask ChatGPT
-                            </button>
-                            <div class="spinner-border spinner-border-sm text-success" role="status">
-                                <span class="visually-hidden">Loading...</span>
-                            </div>
-                        </div>
+                        <h5 class="card-title" id="transcription-title">Chatgpt Response</h5>
+                        <div id="chatgpt_response_box" class="transcription-box"></div>
                     </div>
                 </div>
 
+                <!-- <div id="audio_generation_time"></div> -->
+                <!-- Query and Generated Audio Section -->
+                <!-- <audio id="myAudioElement" controls></audio> -->
+
                 <!-- ChatGPT Response Card -->
-                <div class="card" id="chatgpt_audio" style="display: none;">
+                <div class="card" id="chatgpt_audio" style="">
                     <div class="card-body">
-                        <div id="queryText" class="mb-3"><strong>Query:</strong></div>
-                        <audio id="audioPlayer" controls autoplay class="w-100"></audio>
+                        <div id="audio_generation_time" class="mb-3"></div>
+                        <audio id="myAudioElement" controls></audio>
                     </div>
                 </div>
             </div>
@@ -170,7 +168,92 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- <script src="static/AudioStreamClient.js"></script> -->
     <script>
+        class AudioStreamClient {
+            constructor(audioElementId) {
+                this.audioElement = document.getElementById(audioElementId);
+                if (!this.audioElement) {
+                    throw new Error(`Audio element with id "${audioElementId}" not found`);
+                }
+
+                this.chunks = [];
+                this.currentBlobUrl = null;
+                this.isFirstChunk = true;
+                this.isPlaying = false;
+            }
+
+            appendAudioChunk(chunk) {
+                if (!chunk || chunk.byteLength === 0) {
+                    console.warn('Received empty chunk');
+                    return;
+                }
+
+                // Add the new chunk
+                this.chunks.push(chunk);
+
+                // Create a new blob from all chunks
+                const blob = new Blob(this.chunks, { type: 'audio/mp3' });
+
+                // Create a new URL for the blob
+                const blobUrl = URL.createObjectURL(blob);
+
+                // Clean up the previous blob URL
+                if (this.currentBlobUrl) {
+                    URL.revokeObjectURL(this.currentBlobUrl);
+                }
+
+                // Store the current blob URL
+                this.currentBlobUrl = blobUrl;
+
+                // Update audio element
+                const currentTime = this.audioElement.currentTime;
+                this.audioElement.src = blobUrl;
+
+                // If this is the first chunk, start playing immediately
+                if (this.isFirstChunk) {
+                    this.isFirstChunk = false;
+                    this.play();
+                } else if (this.isPlaying) {
+                    // If already playing, maintain playback
+                    this.audioElement.currentTime = currentTime;
+                    this.play();
+                }
+            }
+
+            async play() {
+                if (this.currentBlobUrl) {
+                    try {
+                        await this.audioElement.play();
+                        this.isPlaying = true;
+                    } catch (error) {
+                        console.error('Error playing audio:', error);
+                        this.isPlaying = false;
+                    }
+                }
+            }
+
+            pause() {
+                this.audioElement.pause();
+                this.isPlaying = false;
+            }
+
+            reset() {
+                this.chunks = [];
+                this.isFirstChunk = true;
+                this.isPlaying = false;
+                if (this.currentBlobUrl) {
+                    URL.revokeObjectURL(this.currentBlobUrl);
+                    this.currentBlobUrl = null;
+                }
+                this.audioElement.src = '';
+            }
+
+            destroy() {
+                this.reset();
+                this.audioElement = null;
+            }
+        }
         let mediaRecorder;
         let audioChunks = [];
         let isRecording = false;
@@ -184,29 +267,50 @@
         let timerInterval;
         let startTime;
         let globalStream;
+        let isFirstChunkReceived = false;
+        let audioClient = new AudioStreamClient("myAudioElement")
 
         // Initialize WebSocket
         function initWebSocket() {
             if (!websocket || websocket.readyState === WebSocket.CLOSED) {
                 websocket = new WebSocket("ws://localhost:8000/ws/audio");
-                websocket.onmessage = function (event) {
-                    const transcript_data = JSON.parse(event.data);
-                    switch (transcript_data.type) {
-                        case 'chunk_transcription':
-                            console.log("Chunk transcription:", transcript_data);
-                            document.getElementById("transcription").innerText += transcript_data.text
-                            transcriptionText = document.getElementById("transcription").innerText;
-                            break;
-                        case 'final_transcription':
-                            console.log("Final transcription:", transcript_data.full_text);
-                            const transcriptionTitle = document.getElementById("transcription-title")
-                            const endTime = Date.now()
-                            transcriptionTitle.innerText = "Transcription Time Taken (" + (endTime - startTime) / 1000 + " seconds)"
-                            generateAudio(transcript_data.full_text);
-                            break;
-                        default:
-                            break;
-
+                websocket.onmessage = async function (event) {
+                    if (typeof event.data === 'string') {
+                        const transcript_data = JSON.parse(event.data);
+                        switch (transcript_data.type) {
+                            case 'chunk_transcription':
+                                console.log("Chunk transcription:", transcript_data);
+                                document.getElementById("transcription").innerText += transcript_data.text
+                                transcriptionText = document.getElementById("transcription").innerText;
+                                break;
+                            case 'final_transcription':
+                                console.log("Final transcription:", transcript_data.full_text);
+                                const transcriptionTitle = document.getElementById("transcription-title")
+                                const endTime = Date.now()
+                                transcriptionTitle.innerText = "Transcription Time Taken (" + (endTime - startTime) / 1000 + " seconds)"
+                                // generateAudio(transcript_data.full_text);
+                                break;
+                            case 'chatgpt_response':
+                                console.log("ChatGPT response:", transcript_data);
+                                const chatgptResponse = document.getElementById("chatgpt_response_box")
+                                chatgptResponse.innerText = chatgptResponse.innerText + transcript_data.content
+                                break
+                            case 'audio_end':
+                                // audioClient.handleStreamEnd();
+                                break
+                            default:
+                                console.log("Received unknown data:", event.data);
+                        }
+                    } else if (event.data instanceof Blob) {
+                        if (!isFirstChunkReceived) {
+                            isFirstChunkReceived = true;
+                            endTime = Date.now();
+                            const audio_generation_time = document.getElementById("audio_generation_time")
+                            audio_generation_time.innerText = "Audio Generation Time Taken (" + (endTime - startTime) / 1000 + " seconds)"
+                        }
+                        const arrayBuffer = await event.data.arrayBuffer();
+                        console.log("Received non-string data:", event.data);
+                        audioClient.appendAudioChunk(arrayBuffer);
                     }
 
 
@@ -260,10 +364,12 @@
             audioChunks = [];
             transcriptionText = "";
             document.getElementById("transcription").innerText = "";
-            document.getElementById("audioPlayer").src = "";
             document.getElementById("recordedAudioContainer").style.display = "none";
-            document.getElementById("generateAudio").disabled = true;
-            document.getElementById("chatgpt_audio").style.display = "none";
+            document.getElementById("chatgpt_response_box").innerText = "";
+            audioClient.destroy();
+            audioClient = new AudioStreamClient("myAudioElement")
+            isFirstChunkReceived = false
+            document.getElementById("audio_generation_time").innerText = "";
             document.body.classList.remove('recording');
             clearInterval(timerInterval);
             document.getElementById('recordingTimer').textContent = '00:00';
@@ -450,41 +556,6 @@
                 document.body.classList.remove('recording');
                 clearInterval(timerInterval);
             }, 300)
-        }
-
-        async function generateAudio(getFullText) {
-            try {
-                // Add loading state
-                const buttonContainer = document.querySelector('#generateAudio').parentElement;
-                buttonContainer.classList.add('loading');
-
-                let query = encodeURIComponent(transcriptionText);
-                if (getFullText) {
-                    query = encodeURIComponent(getFullText);
-                }
-                const response = await fetch(`/stream-audio/?query=${query}`);
-
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
-
-                const audioBlob = await response.blob();
-                const endTime = Date.now();
-                const audioURL = URL.createObjectURL(audioBlob);
-                document.getElementById('audioPlayer').src = audioURL;
-                document.getElementById("chatgpt_audio").style.display = "block";
-                document.getElementById("queryText").innerHTML = `<strong>Query:</strong> ${transcriptionText} Processing Time:${(endTime - startTime) / 1000} seconds`;
-                const audioPlayer = document.getElementById('audioPlayer');
-                audioPlayer.load();
-                audioPlayer.play();
-            } catch (error) {
-                console.error('Error generating audio:', error);
-                alert('Failed to generate audio response. Please try again.');
-            } finally {
-                // Remove loading state
-                const buttonContainer = document.querySelector('#generateAudio').parentElement;
-                buttonContainer.classList.remove('loading');
-            }
         }
 
         // Initialize on page load
