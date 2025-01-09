@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Chat</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #7269ef;
+            --secondary-color: #f5f7fb;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--secondary-color);
+            height: 100vh;
+        }
+
+        .chat-container {
+            max-width: 1000px;
+            margin: 20px auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+            height: calc(100vh - 40px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            padding: 20px;
+            background: var(--primary-color);
+            color: white;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .chat-header h2 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #fff;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+        }
+
+        .message.received {
+            flex-direction: row;
+        }
+
+        .message.sent {
+            flex-direction: row-reverse;
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 12px 20px;
+            border-radius: 12px;
+            position: relative;
+        }
+
+        .received .message-content {
+            background: #f5f7fb;
+            border: 1px solid #e6ebf5;
+        }
+
+        .sent .message-content {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 16px;
+            color: white;
+        }
+
+        .sent .avatar {
+            background: #5bc0de;
+        }
+
+        .received .avatar {
+            background: #6c757d;
+        }
+
+        .chat-controls {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e6ebf5;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .record-button {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+        }
+
+        .record-button:hover {
+            background: #5b54d6;
+        }
+
+        .record-button.recording {
+            background: #dc3545;
+            animation: pulse 1.5s infinite;
+        }
+
+        .record-button i {
+            font-size: 18px;
+        }
+
+        .timer {
+            font-size: 16px;
+            color: #6c757d;
+            font-weight: 500;
+            min-width: 60px;
+        }
+
+        .status {
+            color: #6c757d;
+            font-size: 14px;
+            flex: 1;
+            text-align: center;
+        }
+
+        /* Custom Audio Player Styling */
+        .custom-audio-player {
+            background: rgba(0, 0, 0, 0.05);
+            border-radius: 25px;
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 200px;
+        }
+
+        .sent .custom-audio-player {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .audio-play-button {
+            background: none;
+            border: none;
+            color: inherit;
+            cursor: pointer;
+            padding: 0;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            transition: all 0.2s ease;
+        }
+
+        .audio-play-button:hover {
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        .sent .audio-play-button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .audio-timeline {
+            flex: 1;
+            height: 4px;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 2px;
+            position: relative;
+            cursor: pointer;
+        }
+
+        .sent .audio-timeline {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .audio-progress {
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            background: var(--primary-color);
+            border-radius: 2px;
+        }
+
+        .sent .audio-progress {
+            background: white;
+        }
+
+        .audio-time {
+            font-size: 12px;
+            min-width: 50px;
+            text-align: right;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.05);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+
+        /* Add new styles for response message */
+        .message.received .avatar {
+            background: #6c757d;
+        }
+
+        .loading-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #6c757d;
+        }
+
+        .loading-indicator i {
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h2><i class="fas fa-microphone me-2"></i>Audio Chat</h2>
+        </div>
+        <div class="chat-messages" id="messages">
+            <!-- Messages will be added here -->
+        </div>
+        <div class="chat-controls">
+            <button id="recordButton" class="record-button">
+                <i class="fas fa-microphone"></i>
+                <span>Start Recording</span>
+            </button>
+            <div id="timer" class="timer">00:00</div>
+            <div id="status" class="status"></div>
+        </div>
+    </div>
+
+    <script>
+        class AudioChat {
+            constructor() {
+                this.recordButton = document.getElementById('recordButton');
+                this.timerDisplay = document.getElementById('timer');
+                this.statusDisplay = document.getElementById('status');
+                this.messagesContainer = document.getElementById('messages');
+
+                this.isRecording = false;
+                this.mediaRecorder = null;
+                this.audioChunks = [];
+                this.timerInterval = null;
+                this.startTime = null;
+                this.apiUrl = '/askchatpt/'; // Update with your API endpoint
+
+                this.setupEventListeners();
+            }
+
+            setupEventListeners() {
+                this.recordButton.addEventListener('click', () => {
+                    if (this.isRecording) {
+                        this.stopRecording();
+                    } else {
+                        this.startRecording();
+                    }
+                });
+            }
+
+            async startRecording() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    this.mediaRecorder = new MediaRecorder(stream);
+
+                    this.mediaRecorder.ondataavailable = (event) => {
+                        this.audioChunks.push(event.data);
+                    };
+
+                    this.mediaRecorder.onstop = () => {
+                        const audioBlob = new Blob(this.audioChunks, { type: 'audio/wav' });
+                        this.addMessageToChat(audioBlob);
+                        this.audioChunks = [];
+                    };
+
+                    this.mediaRecorder.start();
+                    this.isRecording = true;
+                    this.recordButton.innerHTML = '<i class="fas fa-stop"></i><span>Stop Recording</span>';
+                    this.recordButton.classList.add('recording');
+                    this.startTimer();
+                    this.updateStatus('Recording in progress...');
+
+                } catch (error) {
+                    console.error('Error accessing microphone:', error);
+                    this.updateStatus('Error accessing microphone');
+                }
+            }
+
+            async stopRecording() {
+                if (this.mediaRecorder && this.isRecording) {
+                    this.mediaRecorder.stop();
+                    this.mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                    this.isRecording = false;
+                    this.recordButton.innerHTML = '<i class="fas fa-microphone"></i><span>Start Recording</span>';
+                    this.recordButton.classList.remove('recording');
+                    this.stopTimer();
+                    this.updateStatus('Processing audio...');
+                }
+            }
+
+            startTimer() {
+                this.startTime = Date.now();
+                this.timerInterval = setInterval(() => {
+                    const elapsed = Date.now() - this.startTime;
+                    const minutes = Math.floor(elapsed / 60000);
+                    const seconds = Math.floor((elapsed % 60000) / 1000);
+                    this.timerDisplay.textContent =
+                        `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                }, 1000);
+            }
+
+            stopTimer() {
+                clearInterval(this.timerInterval);
+                this.timerDisplay.textContent = '00:00';
+            }
+
+            updateStatus(message) {
+                this.statusDisplay.textContent = message;
+            }
+
+            async processAudioData(audioBlob) {
+                const formData = new FormData();
+                formData.append('file', audioBlob, 'audio.wav');
+
+                try {
+                    const loadingMessage = this.addLoadingMessage();
+
+                    const response = await fetch(this.apiUrl, {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const responseBlob = await response.blob();
+
+                    loadingMessage.remove();
+                    this.addResponseMessage(responseBlob);
+                    this.updateStatus('Response received');
+
+                } catch (error) {
+                    console.error('Error processing audio:', error);
+                    this.updateStatus('Error processing audio');
+                }
+            }
+
+            createCustomAudioPlayer(audioBlob) {
+                const playerContainer = document.createElement('div');
+                playerContainer.className = 'custom-audio-player';
+
+                const playButton = document.createElement('button');
+                playButton.className = 'audio-play-button';
+                playButton.innerHTML = '<i class="fas fa-play"></i>';
+
+                const timeline = document.createElement('div');
+                timeline.className = 'audio-timeline';
+                const progress = document.createElement('div');
+                progress.className = 'audio-progress';
+                progress.style.width = '0%';
+                timeline.appendChild(progress);
+
+                const timeDisplay = document.createElement('div');
+                timeDisplay.className = 'audio-time';
+                timeDisplay.textContent = '00:00';
+
+                const audio = document.createElement('audio');
+                audio.src = URL.createObjectURL(audioBlob);
+
+                let isPlaying = false;
+                playButton.addEventListener('click', () => {
+                    if (isPlaying) {
+                        audio.pause();
+                        playButton.innerHTML = '<i class="fas fa-play"></i>';
+                    } else {
+                        audio.play();
+                        playButton.innerHTML = '<i class="fas fa-pause"></i>';
+                    }
+                    isPlaying = !isPlaying;
+                });
+
+                audio.addEventListener('timeupdate', () => {
+                    const currentTime = Math.floor(audio.currentTime);
+                    const minutes = Math.floor(currentTime / 60);
+                    const seconds = currentTime % 60;
+                    timeDisplay.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                    progress.style.width = `${(audio.currentTime / audio.duration) * 100}%`;
+                });
+
+                audio.addEventListener('ended', () => {
+                    playButton.innerHTML = '<i class="fas fa-play"></i>';
+                    isPlaying = false;
+                });
+
+                timeline.addEventListener('click', (e) => {
+                    const rect = timeline.getBoundingClientRect();
+                    const pos = (e.clientX - rect.left) / rect.width;
+                    audio.currentTime = pos * audio.duration;
+                });
+
+                playerContainer.appendChild(playButton);
+                playerContainer.appendChild(timeline);
+                playerContainer.appendChild(timeDisplay);
+
+                return playerContainer;
+            }
+
+            addLoadingMessage() {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message received';
+
+                const avatar = document.createElement('div');
+                avatar.className = 'avatar';
+                avatar.textContent = 'AI';
+
+                const messageContent = document.createElement('div');
+                messageContent.className = 'message-content';
+
+                const loadingIndicator = document.createElement('div');
+                loadingIndicator.className = 'loading-indicator';
+                loadingIndicator.innerHTML = '<i class="fas fa-spinner"></i> Processing your message...';
+
+                messageContent.appendChild(loadingIndicator);
+                messageDiv.appendChild(avatar);
+                messageDiv.appendChild(messageContent);
+
+                this.messagesContainer.appendChild(messageDiv);
+                this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+
+                return messageDiv;
+            }
+
+            addResponseMessage(audioBlob) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message received';
+
+                const avatar = document.createElement('div');
+                avatar.className = 'avatar';
+                avatar.textContent = 'AI';
+
+                const messageContent = document.createElement('div');
+                messageContent.className = 'message-content';
+
+                const audioPlayer = this.createCustomAudioPlayer(audioBlob);
+                messageContent.appendChild(audioPlayer);
+
+                messageDiv.appendChild(avatar);
+                messageDiv.appendChild(messageContent);
+
+                this.messagesContainer.appendChild(messageDiv);
+                this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+            }
+
+            addMessageToChat(audioBlob) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message sent';
+
+                const avatar = document.createElement('div');
+                avatar.className = 'avatar';
+                avatar.textContent = 'Y';
+
+                const messageContent = document.createElement('div');
+                messageContent.className = 'message-content';
+
+                const audioPlayer = this.createCustomAudioPlayer(audioBlob);
+                messageContent.appendChild(audioPlayer);
+
+                messageDiv.appendChild(messageContent);
+                messageDiv.appendChild(avatar);
+
+                this.messagesContainer.appendChild(messageDiv);
+                this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+
+                // Process the audio through the API
+                this.processAudioData(audioBlob);
+            }
+        }
+        // Initialize the chat
+        const audioChat = new AudioChat();
+    </script>
+</body>
+
+</html>
