@@ -445,10 +445,10 @@
             mediaRecorder.onstop = () => {
                 const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                 const audioUrl = URL.createObjectURL(audioBlob);
-                const audioPlayer = document.getElementById('recordedAudioPlayer');
-                audioPlayer.src = audioUrl;
-                document.getElementById('recordedAudioContainer').style.display = 'block';
-                audioPlayer.load();
+                // const audioPlayer = document.getElementById('recordedAudioPlayer');
+                // audioPlayer.src = audioUrl;
+                // document.getElementById('recordedAudioContainer').style.display = 'block';
+                // audioPlayer.load();
             };
 
             mediaRecorder.start();
@@ -510,6 +510,7 @@
                 document.getElementById("stopRecording").disabled = false;
                 document.getElementById("generateAudio").disabled = false;
             };
+
             let onError = (error) => {
                 console.error(error);
             };

@@ -28,7 +28,7 @@ from deepgram import (
     PrerecordedOptions,
     FileSource,
 )
-from src.ServerWebsocketHandlerGladia import WebSocketHandler
+from src.ServerWebSocketHandlerChatApp import WebSocketHandler
 
 
 import requests
@@ -156,7 +156,6 @@ async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
                 first_response_received = True
             yield chunk
 
-            
         # Wait for both tasks to complete
         await asyncio.gather(listen_task, send_task)
 
@@ -518,6 +517,16 @@ def convert_audio_text_deepgram(filename):
     }
 
 
+websocketHandler = WebSocketHandler()
+
+
+@app.websocket("/ws/audio/{user_id}")
+async def audio_ws(websocket: WebSocket, user_id: str):
+    await websocket.accept()
+    logger.info(f"Client connected with user_id: {user_id}")
+    await websocketHandler.handle_websocket(websocket, user_id)
+
+
 @app.post("/askchatpt/")
 async def transcribe(file: UploadFile = File(...)):
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
@@ -551,7 +560,7 @@ async def stream_audio(query: str):
 # Serve HTML UI for recording and transmitting audio
 @app.get("/")
 async def get(request: Request):
-    return templates.TemplateResponse("appv8.html", {"request": request})
+    return templates.TemplateResponse("appv8_realtime.html", {"request": request})
 
 
 @app.get("/app")

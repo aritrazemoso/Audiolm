@@ -1,6 +1,8 @@
 from typing import AsyncGenerator, Optional, Dict, Any
 from openai import OpenAI
 import os
+from src.types import AssistantResponse
+from typing import List
 
 
 class ChatGPTClient:
@@ -11,12 +13,25 @@ class ChatGPTClient:
             base_url="https://api.groq.com/openai/v1",
         )  # Your OpenAI client instance
 
-    async def stream_response(self, query: str) -> AsyncGenerator[str, None]:
+    async def stream_response(
+        self,
+        query: str,
+        context: Optional[List[AssistantResponse]] = None,
+    ) -> AsyncGenerator[str, None]:
         """Stream response from ChatGPT."""
         prompt = self._format_prompt(query)
 
+        if context:
+            prompt += "\nContext:\n"
+            for response in context:
+                prompt += f"\n{response.role}: {response.content}"
+            prompt += "\n\n"
+
+        print(prompt)
         chat_completion = self.client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "user", "content": prompt},
+            ],
             model=self.model,
             stream=True,
         )
@@ -32,4 +47,5 @@ class ChatGPTClient:
             Think that you are an voice assistant. 
             You need to give answer as short as possible.
             ```{query}```
+
         """
