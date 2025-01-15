@@ -112,6 +112,7 @@ async def chatgpt_send_to_websocket(websocket, user_query: str) -> None:
 
 async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
     """Generate audio stream from text with concurrent send/receive."""
+    start_time = time()
     uri = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
 
     async with websockets.connect(uri) as websocket:
@@ -122,7 +123,7 @@ async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
                     "text": " ",
                     "voice_settings": {
                         "stability": 0.5,
-                        "similarity_boost": 0.8,
+                        "similarity_boost": 0.4,
                         "use_speaker_boost": False,
                     },
                     "generation_config": {
@@ -136,7 +137,7 @@ async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
 
         # Create queue for audio chunks
         audio_queue = Queue()
-
+        first_response_received = False
         # Create concurrent tasks
         listen_task = asyncio.create_task(listen(websocket, audio_queue))
         send_task = asyncio.create_task(
@@ -148,8 +149,14 @@ async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
             chunk = await audio_queue.get()
             if chunk is None:  # End of stream
                 break
+            if not first_response_received:
+                end_time = time()
+                latency = end_time - start_time
+                print(f"First response latency: {latency:.2f} seconds")
+                first_response_received = True
             yield chunk
 
+            
         # Wait for both tasks to complete
         await asyncio.gather(listen_task, send_task)
 
@@ -373,7 +380,7 @@ def save_audio_to_flac(audio_np: np.ndarray, sample_rate: int = 44100) -> str:
             audio_np,
             samplerate=sample_rate,
             format="FLAC",
-            subtype="PCM_24",  # Use 24-bit FLAC encoding
+            subtype="PCM_16",  # Use 24-bit FLAC encoding
         )
         temp_file.close()
         return temp_file.name
