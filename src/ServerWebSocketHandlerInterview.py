@@ -181,26 +181,31 @@ class WebSocketHandler:
         history = self.chat_history.get_history(user_id)
         if (
             history
-            and len(
-                filter(
-                    lambda response: response.question_type
-                    == QuestionType.INTRO_QUESTION,
-                    history,
+            or len(
+                list(
+                    filter(
+                        lambda response: response.question_type
+                        == QuestionType.INTRO_QUESTION,
+                        history,
+                    )
                 )
             )
             > 0
         ):
             return
 
+        id = "5dceaaa6-471b-44de-a7f4-9327680b96f2"
         intro_audio = await self.elevenlabs_client.text_to_speech(
-            "Hello! Introduce Yourself", "5dceaaa6-471b-44de-a7f4-9327680b96f2"
+            "Hello! Introduce Yourself", id
         )
+
         await websocket.send_json(
             {
                 "type": EventType.ASK_QUESTION.value,
                 "text": "Hello! Introduce Yourself",
                 "audio": intro_audio,
                 "status": "ready",
+                "response_id": id,
             }
         )
 
@@ -212,6 +217,7 @@ class WebSocketHandler:
                 timestamp=datetime.datetime.now(),
                 question_type=QuestionType.INTRO_QUESTION.value,
                 audio=intro_audio,
+                id=id,
             ),
         )
 

@@ -78,7 +78,7 @@ class ElevenLabsClient:
         file_name: Optional[str] = str(uuid4()),
     ) -> None:
         filename = f"{file_name}.mp3"
-        if check_file_exists(filename, AUDIO_SAVE_PATH):
+        if await check_file_exists(filename, AUDIO_SAVE_PATH):
             return filename
         response = self.client.text_to_speech.convert(
             voice_id=self.voice_id,  # Adam pre-made voice

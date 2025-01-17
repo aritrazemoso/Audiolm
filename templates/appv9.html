@@ -376,7 +376,6 @@
                 this.isPlaying = false;
             }
         }
-
         const USER_ID_KEY = "USER_ID_KEY"
         const EventType = Object.freeze({
             ASK_QUESTION: "askQuestion",
@@ -498,7 +497,6 @@
 
                 const currentAudioClient = this.getAudioClient(response_id);
 
-                console.log("currentAudioClient", currentAudioClient)
 
 
                 if (currentAudioClient.audioElement) {
@@ -523,6 +521,7 @@
                     playButton.onclick = () => {
                         if (currentAudioClient.isPlaying) {
                             currentAudioClient.audioElement.pause();
+                            currentAudioClient.isPlaying = false;
                             playButton.innerHTML = '<i class="fas fa-play"></i>';
                         } else {
                             currentAudioClient.play();
@@ -584,7 +583,8 @@
                                     break
                                 case 'askQuestion':
                                     console.log("Ask question:", transcript_data);
-                                    this.addResponseMessage(`${window.location.origin}/audio/${transcript_data.audio}`, transcript_data.text)
+                                    this.addResponseMessage(`${window.location.origin}/audio/${transcript_data.audio}`, transcript_data.text, transcript_data.response_id);
+                                    this.play_audio_player_by_id(transcript_data.response_id)
                                     break
                                 case 'audio_chunk':
                                     console.log("Audio chunk", transcript_data);
@@ -1026,12 +1026,20 @@
                     throw error;
                 }
             }
-            createCustomAudioPlayer(audioBlob) {
+
+            play_audio_player_by_id(response_id) {
+                const audioPlayer = document.getElementById(`audio-play-button_${response_id}`);
+                if (audioPlayer) {
+
+                }
+            }
+            createCustomAudioPlayer(audioBlob, response_id = "id") {
                 const playerContainer = document.createElement('div');
                 playerContainer.className = 'custom-audio-player';
 
                 const playButton = document.createElement('button');
                 playButton.className = 'audio-play-button';
+                playButton.id = `audio-play-button_${response_id}`
                 playButton.innerHTML = '<i class="fas fa-play"></i>';
 
                 const timeline = document.createElement('div');
@@ -1046,6 +1054,7 @@
                 timeDisplay.textContent = '00:00';
 
                 const audio = document.createElement('audio');
+                audio.id = `audio_player_${response_id}`;
                 if (typeof audioBlob === 'string') {
                     audio.src = audioBlob;
                 } else {
@@ -1055,12 +1064,12 @@
                 let isPlaying = false;
 
                 // Play the audio automatically when the player is created
-                audio.play().then(() => {
-                    isPlaying = true;
-                    playButton.innerHTML = '<i class="fas fa-pause"></i>';
-                }).catch((error) => {
-                    console.error('Autoplay failed:', error);
-                });
+                // audio.play().then(() => {
+                //     isPlaying = true;
+                //     playButton.innerHTML = '<i class="fas fa-pause"></i>';
+                // }).catch((error) => {
+                //     console.error('Autoplay failed:', error);
+                // });
 
                 playButton.addEventListener('click', () => {
                     if (isPlaying) {
@@ -1100,7 +1109,7 @@
             }
 
 
-            addResponseMessage(audioBlob, transcription) {
+            addResponseMessage(audioBlob, transcription, response_id = "id") {
                 const messageDiv = document.createElement('div');
                 messageDiv.className = 'message received';
 
@@ -1116,7 +1125,7 @@
                 transcriptDiv.textContent = transcription;
                 messageContent.appendChild(transcriptDiv);
 
-                const audioPlayer = this.createCustomAudioPlayer(audioBlob);
+                const audioPlayer = this.createCustomAudioPlayer(audioBlob, response_id);
                 messageContent.appendChild(audioPlayer);
 
                 messageDiv.appendChild(avatar);
