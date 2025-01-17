@@ -313,25 +313,26 @@
 
     <script>
         class AudioStreamClient {
-            constructor() {
+            constructor(audioElement) {
                 this.chunks = [];
-                this.audioElement = null; // Will be created dynamically per response
+                this.audioElement = audioElement;
                 this.currentBlobUrl = null;
                 this.isPlaying = false;
-            }
+                this.pendingUpdate = false;
+                this.currentPlaybackTime = 0;
 
-            createAudioElement() {
-                this.audioElement = document.createElement('audio');
+                // Listen for playback completion
                 this.audioElement.addEventListener('ended', () => {
                     this.isPlaying = false;
+                    // If there are pending chunks, update the source
+                    this.currentPlaybackTime = this.audioElement.currentTime;
+                    if (this.pendingUpdate) {
+                        this.updateAudioSource();
+                    }
                 });
-                return this.audioElement;
             }
 
-            appendAudioChunk(chunk, container) {
-                if (!chunk || chunk.byteLength === 0) return;
-
-                this.chunks.push(chunk);
+            updateAudioSource() {
                 const blob = new Blob(this.chunks, { type: 'audio/mp3' });
 
                 if (this.currentBlobUrl) {
@@ -339,19 +340,23 @@
                 }
 
                 this.currentBlobUrl = URL.createObjectURL(blob);
-
-                if (!this.audioElement) {
-                    this.audioElement = this.createAudioElement();
-                }
-
-                const wasPlaying = !this.audioElement.paused;
-                const currentTime = this.audioElement.currentTime;
-
                 this.audioElement.src = this.currentBlobUrl;
+                this.audioElement.currentTime = this.currentPlaybackTime;
+                this.pendingUpdate = false;
+                this.play();
+            }
 
-                if (this.chunks.length === 1 || wasPlaying) {
-                    this.audioElement.currentTime = currentTime;
-                    this.play();
+            appendAudioChunk(chunk) {
+                if (!chunk || chunk.byteLength === 0) return;
+
+                this.chunks.push(chunk);
+
+                // If this is the first chunk or audio is not playing, update immediately
+                if (this.chunks.length === 1 || !this.isPlaying) {
+                    this.updateAudioSource();
+                } else {
+                    // Mark that we have pending chunks to process
+                    this.pendingUpdate = true;
                 }
             }
 
@@ -372,8 +377,9 @@
                 }
                 this.chunks = [];
                 this.currentBlobUrl = null;
-                this.audioElement = null;
                 this.isPlaying = false;
+                this.pendingUpdate = false;
+                this.audioElement.src = '';
             }
         }
         const USER_ID_KEY = "USER_ID_KEY"
@@ -397,7 +403,7 @@
                 this.currentTranscriptionDiv = null
                 this.currentAudioResponseDiv = null
 
-                this.audioClient = new AudioStreamClient();
+                // this.audioClient = new AudioStreamClient();
 
                 this.audioClientMap = new Map()
 
@@ -434,7 +440,10 @@
 
             getAudioClient(response_id) {
                 if (!this.audioClientMap.has(response_id)) {
-                    this.audioClientMap.set(response_id, new AudioStreamClient());
+                    const audioPlayer = document.createElement('audio');
+                    audioPlayer.id = `audio-play-button_${response_id}`;
+                    document.body.appendChild(audioPlayer);
+                    this.audioClientMap.set(response_id, new AudioStreamClient(audioPlayer));
                 }
                 return this.audioClientMap.get(response_id);
             }
@@ -584,7 +593,7 @@
                                 case 'askQuestion':
                                     console.log("Ask question:", transcript_data);
                                     this.addResponseMessage(`${window.location.origin}/audio/${transcript_data.audio}`, transcript_data.text, transcript_data.response_id);
-                                    this.play_audio_player_by_id(transcript_data.response_id)
+                                    // this.play_audio_player_by_id(transcript_data.response_id)
                                     break
                                 case 'audio_chunk':
                                     console.log("Audio chunk", transcript_data);
@@ -1030,7 +1039,7 @@
             play_audio_player_by_id(response_id) {
                 const audioPlayer = document.getElementById(`audio-play-button_${response_id}`);
                 if (audioPlayer) {
-
+                    audioPlayer.click();
                 }
             }
             createCustomAudioPlayer(audioBlob, response_id = "id") {
@@ -1054,6 +1063,7 @@
                 timeDisplay.textContent = '00:00';
 
                 const audio = document.createElement('audio');
+                audio.autoplay = true;
                 audio.id = `audio_player_${response_id}`;
                 if (typeof audioBlob === 'string') {
                     audio.src = audioBlob;
@@ -1074,9 +1084,11 @@
                 playButton.addEventListener('click', () => {
                     if (isPlaying) {
                         audio.pause();
+                        isPlaying = false;
                         playButton.innerHTML = '<i class="fas fa-play"></i>';
                     } else {
                         audio.play();
+                        isPlaying = true;
                         playButton.innerHTML = '<i class="fas fa-pause"></i>';
                     }
                     isPlaying = !isPlaying;
