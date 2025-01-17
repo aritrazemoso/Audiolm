@@ -5,21 +5,19 @@ import uuid
 import base64
 import asyncio
 
-import websockets
 from fastapi import WebSocket
 import os
-from src.utils.ChatgptUtil import ChatGPTHandler
 
 from .WebsocketClient import Client
 from .vad.vad_factory import VADFactory
 from .asr.asr_factory import ASRFactory
-from .utils.audio_stream_util import AudioStreamManager
-from .utils.chatgpt_util import ChatGPTClient
-from .utils.elevenlabs_util import ElevenLabsClient
+from .utils_interview.audio_stream_util import AudioStreamManager
+from .utils_interview.chatgpt_util import ChatGPTClient
+from .utils_interview.elevenlabs_util import ElevenLabsClient
 import datetime
 from typing import Dict, List
 from enum import Enum
-from .types import AssistantResponse
+from .types import InterviewHistory
 from dataclasses import asdict
 
 
@@ -35,19 +33,27 @@ class ChatHistory:
     def __init__(self):
         self.conversations = {}  # userid -> list of messages
 
-    def add_message(self, user_id: str, message: AssistantResponse):
+    def add_message(self, user_id: str, message: InterviewHistory):
         if user_id not in self.conversations:
             self.conversations[user_id] = []
         self.conversations[user_id].append(message)
 
-    def get_history(self, user_id: str) -> List[AssistantResponse]:
+    def get_history(self, user_id: str) -> List[InterviewHistory]:
         return self.conversations.get(user_id, [])
+
+
+class QuestionType(Enum):
+    INTRO_QUESTION = "intro_question"
+    FOLLOWUP_QUESTION = "followup_question"
+    ANSWER = "answer"
 
 
 class EventType(Enum):
     ASK_QUESTION = "askQuestion"
     AUDIO_PACKET = "audioPacket"
     END_QUESTION = "endQuestion"
+    START_ANSWER = "startAnswer"
+    END_ANSWER = "endAnswer"
     TRANSCRIPTION = "final_transcription"
     ANSWER = "answer"
 
@@ -77,9 +83,9 @@ class WebSocketHandler:
             "processing_tasks": [],
             "current_audio": bytearray(),
         }
-        await websocket.send_json(
-            {"type": EventType.ASK_QUESTION.value, "status": "ready"}
-        )
+        # await websocket.send_json(
+        #     {"type": EventType.ASK_QUESTION.value, "status": "ready"}
+        # )
 
     async def handle_audio_packet(
         self, client_id: str, websocket: WebSocket, audio_data: bytes
@@ -131,8 +137,11 @@ class WebSocketHandler:
         # Store in chat history
         self.chat_history.add_message(
             user_id,
-            AssistantResponse(
-                role="user", content=full_text, timestamp=datetime.datetime.now()
+            InterviewHistory(
+                role="user",
+                content=full_text,
+                timestamp=datetime.datetime.now(),
+                question_type=QuestionType.ANSWER.value,
             ),
         )
 
@@ -150,10 +159,11 @@ class WebSocketHandler:
         # Save response history
         self.chat_history.add_message(
             user_id,
-            AssistantResponse(
+            InterviewHistory(
                 role="assistant",
                 content=gptResponse,
                 timestamp=datetime.datetime.now(),
+                question_type=QuestionType.FOLLOWUP_QUESTION.value,
             ),
         )
 
@@ -164,12 +174,53 @@ class WebSocketHandler:
             "current_audio": bytearray(),
         }
 
+    async def handle_introduction(self, websocket: WebSocket, user_id: str):
+
+        ## Check history is there
+
+        history = self.chat_history.get_history(user_id)
+        if (
+            history
+            and len(
+                filter(
+                    lambda response: response.question_type
+                    == QuestionType.INTRO_QUESTION,
+                    history,
+                )
+            )
+            > 0
+        ):
+            return
+
+        intro_audio = await self.elevenlabs_client.text_to_speech(
+            "Hello! Introduce Yourself", "5dceaaa6-471b-44de-a7f4-9327680b96f2"
+        )
+        await websocket.send_json(
+            {
+                "type": EventType.ASK_QUESTION.value,
+                "text": "Hello! Introduce Yourself",
+                "audio": intro_audio,
+                "status": "ready",
+            }
+        )
+
+        history = self.chat_history.add_message(
+            user_id,
+            InterviewHistory(
+                role="assistant",
+                content="Hello! Introduce Yourself",
+                timestamp=datetime.datetime.now(),
+                question_type=QuestionType.INTRO_QUESTION.value,
+                audio=intro_audio,
+            ),
+        )
+
     async def handle_websocket(self, websocket: WebSocket, user_id: str):
-        client_id = str(uuid.uuid4())
+        client_id = user_id
         client = Client(client_id, self.sampling_rate, self.samples_width)
         self.connected_clients[client_id] = client
 
-        logging.info(f"Client {client_id} connected with user_id {user_id}")
+        logging.info(f"Client {client_id} connected ")
 
         try:
             # Send existing chat history
@@ -182,6 +233,8 @@ class WebSocketHandler:
                     }
                 )
 
+            await self.handle_introduction(websocket, user_id)
+
             while True:
                 message = await websocket.receive()
 
@@ -189,9 +242,9 @@ class WebSocketHandler:
                     data = json.loads(s=message["text"])
                     event_type = data.get("type")
 
-                    if event_type == EventType.ASK_QUESTION.value:
+                    if event_type == EventType.START_ANSWER.value:
                         await self.handle_ask_question(client_id, websocket)
-                    elif event_type == EventType.END_QUESTION.value:
+                    elif event_type == EventType.END_ANSWER.value:
                         await self.handle_end_question(client_id, websocket, user_id)
 
                 elif "bytes" in message:
