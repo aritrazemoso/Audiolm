@@ -302,6 +302,11 @@ async def stream_audio(query: str):
 # Serve HTML UI for recording and transmitting audio
 @app.get("/")
 async def get(request: Request):
+    return templates.TemplateResponse("appv9_ms.html", {"request": request})
+
+
+@app.get("/app")
+async def get(request: Request):
     return templates.TemplateResponse("appv9.html", {"request": request})
 
 

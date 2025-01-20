@@ -312,93 +312,86 @@
     </div>
 
     <script>
-        class AudioStreamClient {
-            constructor(audioElement) {
-                this.chunks = [];
-                this.audioElement = audioElement;
-                this.currentBlobUrl = null;
-                this.isPlaying = false;
-                this.pendingUpdate = false;
-                this.currentPlaybackTime = 0;
-                this.pending_blob_url = null
+        class MediaSourceHandler {
+            constructor(mimeCodec = 'audio/mpeg') {
 
-                // Listen for playback completion
-                this.audioElement.addEventListener('ended', () => {
-                    this.isPlaying = false;
-                    // If there are pending chunks, update the source
-                    this.currentPlaybackTime = this.audioElement.currentTime;
-                    if (this.pendingUpdate) {
-                        this.updateAudioSource();
-                    }
-                });
+
+                this.mimeCodec = mimeCodec;
+                this.mediaSource = new MediaSource();
+                this.sourceBuffer = null;
+                this.audioQueue = [];
+                this.isAppending = false;
+
+                // Bind MediaSource to the audio element
+                this.audioSrc = URL.createObjectURL(this.mediaSource);
+
+                // Event listeners
+                this.mediaSource.addEventListener('sourceopen', this.onSourceOpen.bind(this));
+                this.mediaSource.addEventListener('error', this.onSourceError.bind(this));
             }
 
-            async updateAudioSource() {
+            onSourceOpen() {
+                console.log('MediaSource is open');
 
-                if (this.pending_blob_url) {
-                    this.audioElement.src = this.pending_blob_url;
-                    this.audioElement.currentTime = this.currentPlaybackTime;
-                    await this.play()
-                    URL.revokeObjectURL(this.currentBlobUrl);
-                    this.currentBlobUrl = this.pending_blob_url
-                    this.pending_blob_url = null
-                    this.pendingUpdate = false
-                    return
-                }
-
-                const blob = new Blob(this.chunks, { type: 'audio/mp3' });
-
-
-
-                if (this.currentBlobUrl) {
-                    URL.revokeObjectURL(this.currentBlobUrl);
-                }
-
-                this.currentBlobUrl = URL.createObjectURL(blob);
-                this.audioElement.src = this.currentBlobUrl;
-                this.audioElement.currentTime = this.currentPlaybackTime;
-                this.pendingUpdate = false;
-                await this.play();
-            }
-
-            appendAudioChunk(chunk) {
-                if (!chunk || chunk.byteLength === 0) return;
-
-                this.chunks.push(chunk);
-
-                // If this is the first chunk or audio is not playing, update immediately
-                if (this.chunks.length === 1 || !this.isPlaying) {
-                    this.updateAudioSource();
-                } else {
-                    // Mark that we have pending chunks to process
-                    const blob = new Blob(this.chunks, { type: 'audio/mp3' });
-                    this.pending_blob_url = URL.createObjectURL(blob)
-                    this.pendingUpdate = true;
+                // Initialize SourceBuffer for MP3
+                try {
+                    this.sourceBuffer = this.mediaSource.addSourceBuffer(this.mimeCodec);
+                    this.sourceBuffer.addEventListener('error', this.onSourceBufferError.bind(this));
+                } catch (error) {
+                    console.error('Error creating SourceBuffer:', error);
                 }
             }
 
-            async play() {
-                if (this.audioElement && this.currentBlobUrl) {
-                    try {
-                        await this.audioElement.play();
-                        this.isPlaying = true;
-                    } catch (error) {
-                        console.error('Error playing audio:', error);
-                    }
-                }
+            onSourceError(e) {
+                console.error('MediaSource error:', e);
             }
 
-            reset() {
-                if (this.currentBlobUrl) {
-                    URL.revokeObjectURL(this.currentBlobUrl);
+            onSourceBufferError(e) {
+                console.error('SourceBuffer error:', e);
+            }
+
+            appendChunk(chunk) {
+                if (!this.sourceBuffer) {
+                    console.warn('SourceBuffer not initialized');
+                    return;
                 }
-                this.chunks = [];
-                this.currentBlobUrl = null;
-                this.isPlaying = false;
-                this.pendingUpdate = false;
-                this.audioElement.src = '';
+
+                this.audioQueue.push(chunk);
+                this.appendToSourceBuffer();
+            }
+
+            appendToSourceBuffer() {
+                if (this.isAppending || !this.audioQueue.length) return;
+
+                this.isAppending = true;
+                const chunk = this.audioQueue.shift();
+
+                try {
+                    this.sourceBuffer.appendBuffer(chunk);
+                } catch (error) {
+                    console.error('Error appending chunk:', error);
+                    this.isAppending = false;
+                    return;
+                }
+
+                this.sourceBuffer.addEventListener(
+                    'updateend',
+                    () => {
+                        this.isAppending = false;
+                        this.appendToSourceBuffer(); // Process the next chunk
+                    },
+                    { once: true }
+                );
+            }
+
+            endStream() {
+                if (this.mediaSource.readyState === 'open') {
+                    this.mediaSource.endOfStream();
+                }
+                console.log('MediaSource stream ended');
             }
         }
+
         const USER_ID_KEY = "USER_ID_KEY"
         const EventType = Object.freeze({
             ASK_QUESTION: "askQuestion",
@@ -423,6 +416,7 @@
                 // this.audioClient = new AudioStreamClient();
 
                 this.audioClientMap = new Map()
+                this.mediaSourceMap = new Map()
 
 
                 this.isRecording = false;
@@ -464,6 +458,14 @@
                 return this.audioClientMap.get(response_id);
             }
 
+            getMediaSourceByResponseId(response_id) {
+                if (!this.mediaSourceMap.has(response_id)) {
+                    const mediaSource = new MediaSourceHandler();
+                    this.mediaSourceMap.set(response_id, mediaSource);
+                }
+                return this.mediaSourceMap.get(response_id);
+            }
+
             createAudioResponseMessage(response_id) {
                 const messageDiv = document.createElement('div');
                 messageDiv.className = 'message received audio-response';
@@ -474,7 +476,8 @@
                 avatar.textContent = 'AI';
 
                 const messageContent = document.createElement('div');
-                messageContent.className = `message-content_${response_id}`;
+                messageContent.className = `message-content`;
+                messageContent.id = `message-content_${response_id}`
 
                 // Container for text response
                 const textResponse = document.createElement('div');
@@ -483,32 +486,17 @@
                 messageContent.appendChild(textResponse);
 
                 // Audio player container
-                const audioPlayerContainer = document.createElement('div');
-                audioPlayerContainer.className = 'custom-audio-player';
+                const audioPlayer = document.createElement("audio")
+                audioPlayer.id = `audio-player_${response_id}`;
+                audioPlayer.src = this.getMediaSourceByResponseId(response_id).audioSrc
+                audioPlayer.controls = true
+                audioPlayer.autoplay = true
 
-                // Create audio controls
-                const playButton = document.createElement('button');
-                playButton.className = `audio-play-button`;
-                playButton.id = `audio-play-button_${response_id}`
-                playButton.innerHTML = '<i class="fas fa-play"></i>';
+                audioPlayer.onended = () => {
+                    audioPlayer.duration = 0
+                }
 
-                const timeline = document.createElement('div');
-                timeline.className = 'audio-timeline';
-                const progress = document.createElement('div');
-                progress.className = `audio-progress`;
-                progress.id = `audio-progress_${response_id}`
-                timeline.appendChild(progress);
-
-                const timeDisplay = document.createElement('div');
-                timeDisplay.className = `audio-time`;
-                timeDisplay.id = `audio-time_${response_id}`
-                timeDisplay.textContent = '00:00';
-
-                audioPlayerContainer.appendChild(playButton);
-                audioPlayerContainer.appendChild(timeline);
-                audioPlayerContainer.appendChild(timeDisplay);
-
-                messageContent.appendChild(audioPlayerContainer);
+                messageContent.appendChild(audioPlayer);
 
                 messageDiv.appendChild(avatar);
                 messageDiv.appendChild(messageContent);
@@ -516,44 +504,13 @@
                 return messageDiv;
             }
             updateAudioPlayerUI(response_id) {
-                const playButton = document.querySelector(`#audio-play-button_${response_id}`);
-                const progress = document.querySelector(`#audio-progress_${response_id}`);
-                const timeDisplay = document.querySelector(`#audio-time_${response_id}`);
-
-                const currentAudioClient = this.getAudioClient(response_id);
-
-
-
-                if (currentAudioClient.audioElement) {
-                    currentAudioClient.audioElement.addEventListener('timeupdate', () => {
-                        const currentTime = Math.floor(currentAudioClient.audioElement.currentTime);
-                        const duration = currentAudioClient.audioElement.duration;
-
-                        // Update progress bar
-                        if (!isNaN(duration)) {
-                            progress.style.width = `${(currentTime / duration) * 100}%`;
-                        }
-
-                        // Update time display
-                        const minutes = Math.floor(currentTime / 60);
-                        const seconds = currentTime % 60;
-                        timeDisplay.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-                    });
-
-
-                    // Toggles playback of the audio element when the play button is clicked.
-
-                    playButton.onclick = () => {
-                        if (currentAudioClient.isPlaying) {
-                            currentAudioClient.audioElement.pause();
-                            currentAudioClient.isPlaying = false;
-                            playButton.innerHTML = '<i class="fas fa-play"></i>';
-                        } else {
-                            currentAudioClient.play();
-                            playButton.innerHTML = '<i class="fas fa-pause"></i>';
-                        }
-                    };
+                //if not played yet
+                const audioPlayer = document.getElementById(`audio-player_${response_id}`);
+                if (audioPlayer) {
+                    if (audioPlayer.duration == 0)
+                        audioPlayer.play()
                 }
+
             }
 
             base64ToArrayBuffer(base64String) {
@@ -615,13 +572,14 @@
                                     console.log("Audio chunk", transcript_data);
                                     this.ifCurrentResponseDivIsNotExistCreateOne(transcript_data.response_id)
                                     const arrayBuffer = this.base64ToArrayBuffer(transcript_data.content);
-                                    this.getAudioClient(transcript_data.response_id).appendAudioChunk(arrayBuffer);
+                                    this.getMediaSourceByResponseId(transcript_data.response_id).appendChunk(arrayBuffer);
                                     this.updateAudioPlayerUI(transcript_data.response_id)
                                     break
                                 case 'audio_end':
                                     console.log("Audio end");
                                     setTimeout(() => {
                                         this.currentAudioResponseDiv = null
+                                        this.getMediaSourceByResponseId(transcript_data.response_id).endStream()
                                     }, 1000);
                                     break
                                 default:
@@ -1099,7 +1057,14 @@
                 transcriptDiv.textContent = transcription;
                 messageContent.appendChild(transcriptDiv);
 
-                const audioPlayer = this.createCustomAudioPlayer(audioBlob, response_id);
+                const audioPlayer = document.createElement('audio');
+                audioPlayer.id = `audio_player_${response_id}`;
+                if (typeof audioBlob === 'string') {
+                    audioPlayer.src = audioBlob;
+                } else {
+                    audioPlayer.src = URL.createObjectURL(audioBlob);
+                }
+                audioPlayer.controls = true;
                 messageContent.appendChild(audioPlayer);
 
                 messageDiv.appendChild(avatar);
