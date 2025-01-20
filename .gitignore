@@ -2,3 +2,5 @@ venv
 *.env
 debug_audio
 whisper
+*answer.wav
+*chatgpt_res.mp3

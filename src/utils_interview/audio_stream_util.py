@@ -10,6 +10,8 @@ from .chatgpt_util import ChatGPTClient
 from .elevenlabs_util import ElevenLabsClient
 from src.types import InterviewHistory
 from typing import List
+from src.constant import AUDIO_SAVE_PATH
+from src.util import save_audio_bytes_to_file_async
 
 
 class AudioStreamManager:
@@ -24,7 +26,7 @@ class AudioStreamManager:
         client_ws: WebSocket,
         websocket: websockets.WebSocketClientProtocol,
         response_id: str,
-    ) -> None:
+    ) -> AsyncGenerator[bytes, None]:
         """Stream audio directly from ElevenLabs to client."""
         while True:
             try:
@@ -41,6 +43,7 @@ class AudioStreamManager:
                     )
                     audio_chunk = base64.b64decode(s=data["audio"])
                     await client_ws.send_bytes(audio_chunk)
+                    yield audio_chunk
                 elif data.get("isFinal"):
                     await client_ws.send_json({"type": "audio_end"})
                     break
@@ -57,7 +60,7 @@ class AudioStreamManager:
         query: str,
         response_id: str = "",
         history: Optional[List[InterviewHistory]] = None,
-    ) -> None:
+    ):
         """Handle the complete streaming process."""
         try:
             # Connect to ElevenLabs
@@ -65,9 +68,18 @@ class AudioStreamManager:
             accumulated_text = ""
             chatGptResponse = ""
 
+            # Send initial configuration to ElevenLabs
+            chatgpt_res_audio_file_name = f"{response_id}_chatgpt_res.mp3"
+
             # Start streaming audio in parallel with text processing
             stream_task = asyncio.create_task(
-                self.stream_audio(client_ws, self.elevenlabs.websocket, response_id)
+                save_audio_bytes_to_file_async(
+                    self.stream_audio(
+                        client_ws, self.elevenlabs.websocket, response_id
+                    ),
+                    chatgpt_res_audio_file_name,
+                    AUDIO_SAVE_PATH,
+                )
             )
 
             # Process ChatGPT response and send to ElevenLabs
@@ -101,7 +113,7 @@ class AudioStreamManager:
 
             # Wait for audio streaming to complete
             await stream_task
-            return chatGptResponse
+            return [chatGptResponse, chatgpt_res_audio_file_name]
 
         except Exception as e:
             print(f"Error in stream handling: {e}")

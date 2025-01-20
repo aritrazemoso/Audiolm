@@ -249,19 +249,27 @@ async def stream_audio(file_path: str):
 
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Audio file not found")
-
     if not audio_path.is_file():
         raise HTTPException(status_code=400, detail="Path is not a file")
 
-    # Check if it's an audio file (basic check)
-    if not str(audio_path).lower().endswith((".mp3", ".wav", ".ogg", ".m4a")):
+    # Define supported audio formats and their corresponding media types
+    AUDIO_TYPES = {
+        ".mp3": "audio/mpeg",
+        ".wav": "audio/wav",
+        ".ogg": "audio/ogg",
+        ".m4a": "audio/mp4",
+    }
+
+    # Get file extension and check if supported
+    file_extension = audio_path.suffix.lower()
+    if file_extension not in AUDIO_TYPES:
         raise HTTPException(
             status_code=400, detail="File is not a supported audio format"
         )
 
     return StreamingResponse(
         audio_stream_generator(str(audio_path)),
-        media_type="audio/mpeg",
+        media_type=AUDIO_TYPES[file_extension],
         headers={
             "Accept-Ranges": "bytes",
             "Content-Disposition": f"attachment; filename={audio_path.name}",

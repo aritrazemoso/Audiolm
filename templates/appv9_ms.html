@@ -582,6 +582,10 @@
                                         this.getMediaSourceByResponseId(transcript_data.response_id).endStream()
                                     }, 1000);
                                     break
+                                case 'chat_history':
+                                    console.log("Chat history", transcript_data);
+                                    this.renderHistory(transcript_data.history)
+                                    break
                                 default:
                                     console.log("Received unknown data:", event.data);
                             }
@@ -608,6 +612,17 @@
                         console.log("WebSocket closed. Retrying in 2 seconds...");
                         setTimeout(this.initWebSocket, 2000);
                     };
+                }
+            }
+
+            renderHistory(history) {
+                for (const chat of history) {
+                    const audio_url = `${window.location.origin}/audio/${chat['audio']}`
+                    if (chat['role'] === 'assistant') {
+                        this.addResponseMessage(audio_url, chat['content'], chat['id'], "received")
+                    } else {
+                        this.addResponseMessage(audio_url, chat['content'], chat['id'], "sent")
+                    }
                 }
             }
 
@@ -1041,9 +1056,9 @@
             }
 
 
-            addResponseMessage(audioBlob, transcription, response_id = "id") {
+            addResponseMessage(audioBlob, transcription, response_id = "id", messageType = "received") {
                 const messageDiv = document.createElement('div');
-                messageDiv.className = 'message received';
+                messageDiv.className = `message ${messageType}`;
 
                 const avatar = document.createElement('div');
                 avatar.className = 'avatar';

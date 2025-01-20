@@ -1,5 +1,5 @@
 import json
-import logging
+from .logger import logger as logging
 import ssl
 import uuid
 import base64
@@ -19,6 +19,9 @@ from typing import Dict, List
 from enum import Enum
 from .types import InterviewHistory
 from dataclasses import asdict
+from .util import save_audio_to_file
+import traceback
+from .constant import AUDIO_SAVE_PATH
 
 
 SAMPLE_RATE = 16000
@@ -108,6 +111,8 @@ class WebSocketHandler:
         )
         session["processing_tasks"].append(task)
 
+        session["current_audio"].extend(audio_data)  # Store audio_data
+
         # Clean up completed tasks
         session["processing_tasks"] = [
             t for t in session["processing_tasks"] if not t.done()
@@ -134,7 +139,32 @@ class WebSocketHandler:
             "response_id": response_id,
         }
 
+        user_answer_file_name = f"{response_id}_answer.wav"
+
+        ## Store the user answer audio
+        file_save_task = asyncio.create_task(
+            save_audio_to_file(
+                session["current_audio"], user_answer_file_name, AUDIO_SAVE_PATH
+            )
+        )
+
         # Store in chat history
+
+        # Send transcription
+        await websocket.send_json(final_transcription)
+
+        # Generate and stream audio response
+        [gptResponse, gptResponseAudio] = await self.audio_stream_manager.handle_stream(
+            websocket,
+            full_text,
+            response_id,
+            history=self.chat_history.get_history(user_id),
+        )
+
+        print("Gpt Response Audio type", type(gptResponseAudio))
+
+        print("user_answer_save", await file_save_task)
+
         self.chat_history.add_message(
             user_id,
             InterviewHistory(
@@ -142,18 +172,8 @@ class WebSocketHandler:
                 content=full_text,
                 timestamp=datetime.datetime.now(),
                 question_type=QuestionType.ANSWER.value,
+                audio=user_answer_file_name,
             ),
-        )
-
-        # Send transcription
-        await websocket.send_json(final_transcription)
-
-        # Generate and stream audio response
-        gptResponse = await self.audio_stream_manager.handle_stream(
-            websocket,
-            full_text,
-            response_id,
-            history=self.chat_history.get_history(user_id),
         )
 
         # Save response history
@@ -164,6 +184,7 @@ class WebSocketHandler:
                 content=gptResponse,
                 timestamp=datetime.datetime.now(),
                 question_type=QuestionType.FOLLOWUP_QUESTION.value,
+                audio=gptResponseAudio,
             ),
         )
 
@@ -260,7 +281,9 @@ class WebSocketHandler:
                     )
 
         except Exception as e:
-            logging.error(f"Error in websocket handler: {e}")
+            logging.error(
+                f"Error in websocket handler: {str(e)}\n{traceback.format_exc()}"
+            )
         finally:
             if client_id in self.connected_clients:
                 del self.connected_clients[client_id]
