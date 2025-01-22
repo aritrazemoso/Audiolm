@@ -7,6 +7,7 @@ import asyncio
 
 from fastapi import WebSocket
 import os
+from fastapi.websockets import WebSocketState
 
 from .WebsocketClient import Client
 from .vad.vad_factory import VADFactory
@@ -22,6 +23,7 @@ from dataclasses import asdict
 from .util import save_audio_to_file
 import traceback
 from .constant import AUDIO_SAVE_PATH
+from src.utility.ResumeStorageUtil import ResumeStorage
 
 
 SAMPLE_RATE = 16000
@@ -58,6 +60,9 @@ class EventType(Enum):
     START_ANSWER = "startAnswer"
     END_ANSWER = "endAnswer"
     TRANSCRIPTION = "final_transcription"
+    ASK_FOR_RESUME = "askForResume"
+    RECEIVE_RESUME = "receiveResume"
+    SUCCESS_FULL_RESUME_RECEIVED = "successFullResumeReceived"
     ANSWER = "answer"
 
 
@@ -78,6 +83,7 @@ class WebSocketHandler:
             self.elevenlabs_client, self.chatgpt_client
         )
         self.chat_history = ChatHistory()
+        self.resume_storage = ResumeStorage()
 
     async def handle_ask_question(self, client_id: str, websocket: WebSocket):
         """Handle the start of a new question"""
@@ -153,18 +159,6 @@ class WebSocketHandler:
         # Send transcription
         await websocket.send_json(final_transcription)
 
-        # Generate and stream audio response
-        [gptResponse, gptResponseAudio] = await self.audio_stream_manager.handle_stream(
-            websocket,
-            full_text,
-            response_id,
-            history=self.chat_history.get_history(user_id),
-        )
-
-        print("Gpt Response Audio type", type(gptResponseAudio))
-
-        print("user_answer_save", await file_save_task)
-
         self.chat_history.add_message(
             user_id,
             InterviewHistory(
@@ -175,6 +169,19 @@ class WebSocketHandler:
                 audio=user_answer_file_name,
             ),
         )
+
+        # Generate and stream audio response
+        [gptResponse, gptResponseAudio] = await self.audio_stream_manager.handle_stream(
+            websocket,
+            full_text,
+            await self.resume_storage.get_resume(user_id),
+            response_id,
+            history=self.chat_history.get_history(user_id),
+        )
+
+        print("Gpt Response Audio type", type(gptResponseAudio))
+
+        print("user_answer_save", await file_save_task)
 
         # Save response history
         self.chat_history.add_message(
@@ -194,6 +201,76 @@ class WebSocketHandler:
             "processing_tasks": [],
             "current_audio": bytearray(),
         }
+
+    async def handle_introduction2(self, websocket: WebSocket, user_id: str):
+        response_id = str(uuid.uuid4())
+
+        [gptResponse, gptResponseAudio] = await self.audio_stream_manager.handle_stream(
+            websocket,
+            None,
+            await self.resume_storage.get_resume(user_id),
+            response_id,
+            self.chat_history.get_history(user_id),
+        )
+
+        # Save response history
+        self.chat_history.add_message(
+            user_id,
+            InterviewHistory(
+                role="assistant",
+                content=gptResponse,
+                timestamp=datetime.datetime.now(),
+                question_type=QuestionType.FOLLOWUP_QUESTION.value,
+                audio=gptResponseAudio,
+            ),
+        )
+
+    async def ask_for_resume(self, websocket: WebSocket, user_id: str):
+        resume = await self.resume_storage.get_resume(user_id)
+
+        async def ask_for_resume():
+            await websocket.send_json(
+                {
+                    "type": EventType.ASK_FOR_RESUME.value,
+                }
+            )
+
+        if not resume:
+            await ask_for_resume()
+            while True:
+                if websocket.client_state == WebSocketState.DISCONNECTED:
+                    break
+                message = await websocket.receive()
+
+                if "text" in message:
+                    data = json.loads(s=message["text"])
+                    event_type = data.get("type")
+
+                    if event_type == EventType.RECEIVE_RESUME.value:
+                        resume = await self.resume_storage.get_resume(user_id)
+                        if resume:
+                            await websocket.send_json(
+                                {
+                                    "type": EventType.SUCCESS_FULL_RESUME_RECEIVED.value,
+                                    "resume": json.loads(resume),
+                                }
+                            )
+                            break
+                        else:
+                            await ask_for_resume()
+                    else:
+                        await ask_for_resume()
+
+                else:
+                    await ask_for_resume()
+
+        else:
+            await websocket.send_json(
+                {
+                    "type": EventType.SUCCESS_FULL_RESUME_RECEIVED.value,
+                    "resume": json.loads(resume),
+                }
+            )
 
     async def handle_introduction(self, websocket: WebSocket, user_id: str):
 
@@ -250,6 +327,7 @@ class WebSocketHandler:
         logging.info(f"Client {client_id} connected ")
 
         try:
+            await self.ask_for_resume(websocket, user_id)
             # Send existing chat history
             history = self.chat_history.get_history(user_id)
             if history:
@@ -260,9 +338,12 @@ class WebSocketHandler:
                     }
                 )
 
-            await self.handle_introduction(websocket, user_id)
+            else:
+                await self.handle_introduction2(websocket, user_id)
 
             while True:
+                if websocket.client_state == WebSocketState.DISCONNECTED:
+                    break
                 message = await websocket.receive()
 
                 if "text" in message:

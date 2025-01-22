@@ -1,6 +1,7 @@
 import os
 import wave
 from typing import Iterator
+import json
 
 
 async def save_audio_to_file(
@@ -78,3 +79,11 @@ async def save_audio_bytes_to_file_async(
 async def check_file_exists(file_name, dir):
     file_path = os.path.join(dir, file_name)
     return os.path.exists(file_path)
+
+
+async def read_file(file_name, dir):
+    if not await check_file_exists(file_name, dir):
+        return False
+    file_path = os.path.join(dir, file_name)
+    with open(file_path, "r") as f:
+        return json.load(f)

@@ -17,7 +17,7 @@ import os
 import asyncio
 from openai import OpenAI
 from dotenv import load_dotenv
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 import websockets
 import json
 from scipy import signal
@@ -31,142 +31,13 @@ import wave
 from time import time
 import noisereduce as nr
 from asyncio import Queue
-from deepgram import (
-    DeepgramClient,
-    PrerecordedOptions,
-    FileSource,
-)
+
 from src.ServerWebSocketHandlerInterview import WebSocketHandler
-from src.constant import AUDIO_SAVE_PATH
-
-
-import requests
-
-API_URL = "https://api-inference.huggingface.co/models/openai/whisper-large-v3-turbo"
-headers = {"Authorization": "Bearer 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"}
-
-
-def convert_audio_text(filename):
-    with open(filename, "rb") as f:
-        data = f.read()
-        response = requests.post(API_URL, headers=headers, data=data)
-        return response.json()
+from src.constant import AUDIO_SAVE_PATH, USER_DATA_PATH
+from src.utility.PdfUtility import PDFProcessor
 
 
 load_dotenv()
-
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-
-voice_id = "pNInz6obpgDQGcFmaJgB"
-model_id = "eleven_turbo_v2_5"
-
-client = OpenAI(
-    api_key=os.environ["GROQ_API_KEY"],  # This is the default and can be omitted
-    base_url="https://api.groq.com/openai/v1",
-)
-
-
-async def listen(websocket, audio_queue: Queue) -> None:
-    """Listen to the websocket for audio data and put it in queue."""
-    while True:
-        try:
-            message = await websocket.recv()
-            data = json.loads(message)
-            if data.get("audio"):
-                await audio_queue.put(base64.b64decode(data["audio"]))
-            elif data.get("isFinal"):
-                await audio_queue.put(None)  # Signal end of stream
-                break
-        except websockets.exceptions.ConnectionClosed as e:
-            print("Connection closed")
-            print(e)
-            await audio_queue.put(None)  # Signal end of stream
-            break
-
-
-async def chatgpt_send_to_websocket(websocket, user_query: str) -> None:
-    """Send text chunks to websocket from ChatGPT response."""
-    chat_completion = client.chat.completions.create(
-        messages=[
-            {
-                "role": "user",
-                "content": """
-                    You are a helpful assistant. Please assist the user with their query.
-                    Think that you are an voice assistant. 
-                    You need to give answer as short as possible.
-                    ```{user_query}```
-                    """.format(
-                    user_query=user_query
-                ),
-            },
-        ],
-        model="llama3-8b-8192",
-        stream=True,
-    )
-
-    try:
-        for chunk in chat_completion:
-            if chunk.choices[0].delta.content is not None:
-                if chunk.choices[0].delta.content != "":
-                    await websocket.send(
-                        json.dumps({"text": chunk.choices[0].delta.content})
-                    )
-            else:
-                await websocket.send(json.dumps({"text": ""}))
-                print("End of text stream")
-    except Exception as e:
-        print(f"Error sending text: {e}")
-        await websocket.send(json.dumps({"text": ""}))
-
-
-async def generate_audio_stream(user_query: str) -> AsyncGenerator[bytes, None]:
-    """Generate audio stream from text with concurrent send/receive."""
-    start_time = time()
-    uri = f"wss://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream-input?model_id={model_id}"
-
-    async with websockets.connect(uri) as websocket:
-        # Send initial configuration
-        await websocket.send(
-            json.dumps(
-                {
-                    "text": " ",
-                    "voice_settings": {
-                        "stability": 0.5,
-                        "similarity_boost": 0.4,
-                        "use_speaker_boost": False,
-                    },
-                    "generation_config": {
-                        # "chunk_length_schedule": [120, 160, 250, 290],
-                        "flush": True,
-                    },
-                    "xi_api_key": ELEVENLABS_API_KEY,
-                }
-            )
-        )
-
-        # Create queue for audio chunks
-        audio_queue = Queue()
-        first_response_received = False
-        # Create concurrent tasks
-        listen_task = asyncio.create_task(listen(websocket, audio_queue))
-        send_task = asyncio.create_task(
-            chatgpt_send_to_websocket(websocket, user_query)
-        )
-
-        # Stream audio chunks from queue
-        while True:
-            chunk = await audio_queue.get()
-            if chunk is None:  # End of stream
-                break
-            if not first_response_received:
-                end_time = time()
-                latency = end_time - start_time
-                print(f"First response latency: {latency:.2f} seconds")
-                first_response_received = True
-            yield chunk
-
-        # Wait for both tasks to complete
-        await asyncio.gather(listen_task, send_task)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -178,38 +49,6 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-
-deepgram = DeepgramClient(os.getenv("DEEPGRAM_API_KEY"))
-
-
-def convert_audio_text_deepgram(filename):
-    with open(filename, "rb") as f:
-        data = f.read()
-    payload: FileSource = {
-        "buffer": data,
-    }
-    # STEP 2: Configure Deepgram options for audio analysis
-    options = PrerecordedOptions(
-        model="nova-2",
-        smart_format=True,
-    )
-    start_time = time()
-    # STEP 3: Call the transcribe_file method with the text payload and options
-    response = deepgram.listen.rest.v("1").transcribe_file(payload, options)
-    end_time = time()
-    print("time_taken : ", end_time - start_time)
-    print(
-        response.to_dict()
-        .get("results")
-        .get("channels")[0]["alternatives"][0]["transcript"]
-    )
-    # STEP 4: Print the response
-    return {
-        "text": response.to_dict()
-        .get("results")
-        .get("channels")[0]["alternatives"][0]["transcript"]
-    }
 
 
 websocketHandler = WebSocketHandler()
@@ -277,34 +116,57 @@ async def stream_audio(file_path: str):
     )
 
 
-@app.post("/askchatpt/")
-async def transcribe(file: UploadFile = File(...)):
-    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-        temp_file.write(await file.read())
-        temp_file_path = temp_file.name
-    start = time()
-    transcription = convert_audio_text_deepgram(temp_file_path)
-    print(transcription["text"])
-    end = time()
-    logger.info(f"Transcribe time: {end-start}")
-    return StreamingResponse(
-        generate_audio_stream(transcription["text"]),
-        media_type="audio/mpeg",
-        headers={"Content-Disposition": "attachment; filename=audio_stream.mp3"},
-    )
+pdf_processor = PDFProcessor()
 
 
-@app.get("/stream-audio/")
-async def stream_audio(query: str):
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...), user_id: Optional[str] = None):
     """
-    Stream audio endpoint.
-    Query parameter: query (str) - The text query to convert to speech
+    Upload and process a PDF file
     """
-    return StreamingResponse(
-        generate_audio_stream(query),
-        media_type="audio/mpeg",
-        headers={"Content-Disposition": "attachment; filename=audio_stream.mp3"},
-    )
+    if not user_id:
+        raise HTTPException(status_code=400, detail="user_id is required")
+
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are accepted")
+
+    try:
+        # Extract text from PDF
+        extracted_text = await pdf_processor.extract_text_from_pdf(file)
+
+        # Extract information from text
+        extracted_info = pdf_processor.extract_contact_info(extracted_text)
+
+        # Add original text for reference
+        extracted_info["original_text"] = extracted_text
+
+        # Save to user file
+        pdf_processor.save_json(user_id, extracted_info)
+
+        return {
+            "status": "success",
+            "message": "File processed successfully",
+            "extracted_info": extracted_info,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Optional: Add an endpoint to retrieve processed data
+@app.get("/user_data/{user_id}")
+async def get_user_data(user_id: str):
+    """
+    Retrieve processed data for a user
+    """
+    file_path = os.path.join(pdf_processor.output_dir, f"{user_id}.json")
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="User data not found")
+
+    with open(file_path, "r") as f:
+        data = json.load(f)
+    return data
 
 
 # Serve HTML UI for recording and transmitting audio
@@ -315,7 +177,7 @@ async def get(request: Request):
 
 @app.get("/app")
 async def get(request: Request):
-    return templates.TemplateResponse("appv9.html", {"request": request})
+    return templates.TemplateResponse("appv9_with_resume.html", {"request": request})
 
 
 if __name__ == "__main__":

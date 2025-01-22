@@ -58,6 +58,7 @@ class AudioStreamManager:
         self,
         client_ws: WebSocket,
         query: str,
+        resume: str,
         response_id: str = "",
         history: Optional[List[InterviewHistory]] = None,
     ):
@@ -83,7 +84,9 @@ class AudioStreamManager:
             )
 
             # Process ChatGPT response and send to ElevenLabs
-            async for text_chunk in self.chatgpt.stream_response(query, history):
+            async for text_chunk in self.chatgpt.stream_response(
+                query, resume, history
+            ):
                 # Send text to client
                 await client_ws.send_json(
                     {

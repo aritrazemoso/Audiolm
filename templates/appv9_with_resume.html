@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional Audio Chat</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --secondary-color: #f3f4f6;
+            --accent-color: #1d4ed8;
+            --text-color: #374151;
+            --border-color: #e5e7eb;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--secondary-color);
+            color: var(--text-color);
+            line-height: 1.5;
+        }
+
+        .app-container {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            height: 100vh;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            background: white;
+            border-right: 1px solid var(--border-color);
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .resume-section {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .upload-btn {
+            background: var(--primary-color);
+            color: white;
+            padding: 0.75rem 1rem;
+            border: none;
+            border-radius: 0.5rem;
+            cursor: pointer;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            width: 100%;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }
+
+        .upload-btn:hover {
+            background: var(--accent-color);
+        }
+
+        .file-list {
+            list-style: none;
+            max-height: 90vh;
+            overflow-y: scroll;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            flex-direction: column;
+            gap: 0.5rem;
+            padding: 0.5rem;
+            background: var(--secondary-color);
+            border-radius: 0.25rem;
+            margin-bottom: 0.5rem;
+        }
+
+        /* Chat Container Styles */
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .chat-header {
+            padding: 1rem;
+            background: white;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            background: var(--secondary-color);
+        }
+
+        .message {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            align-items: flex-start;
+        }
+
+        .message.sent {
+            flex-direction: row-reverse;
+        }
+
+        .message-content {
+            background: white;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            max-width: 70%;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        }
+
+        .sent .message-content {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .chat-controls {
+            padding: 1rem;
+            background: white;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .record-button {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 2rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 500;
+        }
+
+        .record-button.recording {
+            background: #dc2626;
+            animation: pulse 1.5s infinite;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            width: 90%;
+            max-width: 500px;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .close-modal {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--text-color);
+        }
+
+        .dropzone {
+            border: 2px dashed var(--border-color);
+            padding: 2rem;
+            text-align: center;
+            margin: 1rem 0;
+            border-radius: 0.5rem;
+        }
+
+        .dropzone.dragover {
+            border-color: var(--primary-color);
+            background: var(--secondary-color);
+        }
+
+        /* Audio Player Styles */
+        .custom-audio-player {
+            background: var(--secondary-color);
+            padding: 0.5rem;
+            border-radius: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .audio-controls button {
+            background: none;
+            border: none;
+            cursor: pointer;
+            color: var(--primary-color);
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.05);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        /* Add these styles to your existing CSS */
+        .file-item {
+            background: white;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .file-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .file-name {
+            flex: 1;
+            font-weight: 500;
+        }
+
+        .file-status {
+            font-size: 0.875rem;
+            color: #6b7280;
+        }
+
+        .extracted-info {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .info-section {
+            margin-bottom: 1rem;
+        }
+
+        .info-section h4 {
+            font-size: 0.875rem;
+            color: #4b5563;
+            margin-bottom: 0.5rem;
+        }
+
+        .info-section p {
+            font-size: 0.875rem;
+            margin-bottom: 0.25rem;
+        }
+
+        /* Add loading spinner */
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .loading .file-status::after {
+            content: '';
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            border: 2px solid #6b7280;
+            border-top-color: transparent;
+            border-radius: 50%;
+            margin-left: 0.5rem;
+            animation: spin 1s linear infinite;
+        }
+
+        /* Main container styles */
+        .cv-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            font-family: 'Arial', sans-serif;
+        }
+
+        /* Section styles */
+        .info-section {
+            margin-bottom: 1.5rem;
+            padding: 1rem;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+
+        .info-section h4 {
+            color: #2c3e50;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #eef2f7;
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        /* Experience and Project items */
+        .experience-item,
+        .project-item {
+            margin-bottom: 1.5rem;
+            padding: 1.25rem;
+            background-color: #f8f9fa;
+            border-radius: 6px;
+            border-left: 4px solid #3498db;
+        }
+
+        .experience-item:last-child,
+        .project-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .experience-item h5,
+        .project-item h5 {
+            color: #34495e;
+            margin-bottom: 0.75rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        /* Duration styling */
+        .duration {
+            color: #666;
+            font-size: 0.9rem;
+            margin-bottom: 1rem;
+            font-style: italic;
+        }
+
+        /* Description styling */
+        .description {
+            margin-bottom: 1rem;
+            line-height: 1.6;
+            color: #4a5568;
+        }
+
+        /* List sections */
+        .list-section {
+            margin-top: 1rem;
+        }
+
+        .list-section h6 {
+            color: #2c3e50;
+            margin-bottom: 0.5rem;
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .list-section ul {
+            margin: 0;
+            padding-left: 1.5rem;
+            list-style-type: disc;
+        }
+
+        .list-section li {
+            margin-bottom: 0.5rem;
+            color: #4a5568;
+            line-height: 1.5;
+        }
+
+        /* Skills section */
+        .skills-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .skill-item {
+            background-color: #e2e8f0;
+            padding: 0.25rem 0.75rem;
+            border-radius: 15px;
+            font-size: 0.9rem;
+            color: #4a5568;
+        }
+
+        /* Personal information */
+        .personal-info {
+            line-height: 1.6;
+            color: #4a5568;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .cv-container {
+                padding: 15px;
+            }
+
+            .info-section {
+                padding: 0.75rem;
+            }
+
+            .experience-item,
+            .project-item {
+                padding: 1rem;
+            }
+
+            .info-section h4 {
+                font-size: 1.1rem;
+            }
+
+            .experience-item h5,
+            .project-item h5 {
+                font-size: 1rem;
+            }
+        }
+
+        /* Print styles */
+        @media print {
+            .cv-container {
+                max-width: none;
+                padding: 0;
+            }
+
+            .info-section {
+                box-shadow: none;
+                border: 1px solid #eee;
+                break-inside: avoid;
+            }
+
+            .experience-item,
+            .project-item {
+                break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="resume-section">
+                <button id="uploadBtn" class="upload-btn">
+                    <i class="fas fa-upload"></i>
+                    Upload Resume
+                </button>
+                <ul id="fileList" class="file-list"></ul>
+            </div>
+        </aside>
+
+        <main class="chat-container">
+            <header class="chat-header">
+                <h1><i class="fas fa-microphone"></i> Professional Audio Chat</h1>
+            </header>
+
+            <div id="messages" class="chat-messages"></div>
+
+            <div class="chat-controls">
+                <button id="recordButton" class="record-button">
+                    <i class="fas fa-microphone"></i>
+                    <span>Start Recording</span>
+                </button>
+                <div id="timer" class="timer">00:00</div>
+                <div id="status" class="status"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Upload Modal -->
+    <div id="uploadModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Upload Resume</h2>
+                <button class="close-modal">&times;</button>
+            </div>
+            <div id="dropzone" class="dropzone">
+                <p>Drag and drop your resume here or click to select</p>
+                <input type="file" id="fileInput" hidden accept=".pdf,.doc,.docx">
+            </div>
+        </div>
+    </div>
+
+    <script src="static/websocketHandlerApp9.js"></script>
+
+    <script>
+        // Original AudioChat class code remains the same
+
+
+        // New Resume Handler Class
+
+    </script>
+</body>
+
+</html>
