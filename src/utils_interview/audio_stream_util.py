@@ -1,5 +1,7 @@
 from dataclasses import dataclass
+import datetime
 from typing import AsyncGenerator, Literal, Optional, Dict, Any
+import aiofiles
 import websockets
 import asyncio
 import json
@@ -53,6 +55,77 @@ class AudioStreamManager:
                     {"type": "error", "content": "Audio stream connection closed"}
                 )
                 break
+            
+    async def save_conversation(self, query, response):
+        # Collect responses
+        collected_response = {
+            "query": query,
+            "system_response": response
+        }
+        # Write collected responses to a JSON file
+        file_path = "query_system_response.json"    
+        # Read existing responses or create new
+        try:
+            async with aiofiles.open(file_path, 'r') as file:
+                content = await file.read()
+                existing_responses = json.loads(content) if content else []
+        except FileNotFoundError:
+            existing_responses = []
+
+        # Append new response
+        if isinstance(existing_responses, list):
+            existing_responses.append(collected_response)
+        else:
+            existing_responses = [existing_responses, collected_response]
+
+        # Write updated responses
+        async with aiofiles.open(file_path, 'w') as file:
+            await file.write(json.dumps(existing_responses, indent=4))
+
+        return f"Responses saved to: {file_path}"
+        
+    async def generate_final_report(self, history):
+        print("Generating final report")
+        # Read all responses from the JSON file
+        file_path = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_query_system_response.json"
+        print("got file path")
+        json_data = []
+        for entry in history:
+            json_data.append({
+                "role": entry.role,
+                "content": entry.content,
+                "question_type": entry.question_type,
+                "timestamp": entry.timestamp,
+                "audio": entry.audio,
+                "id": entry.id
+            })
+        
+        evaluator_prompt = self.chatgpt.get_evaluator_prompt(json_data)
+        evaluator_response = self.chatgpt.get_evaluator_response(evaluator_prompt)
+        
+        print("evaluator_response : ", evaluator_response)        
+        
+        #  Read existing responses or create new
+        try:
+            async with aiofiles.open(file_path, 'r') as file:
+                content = await file.read()
+                existing_responses = json.loads(content) if content else []
+        except FileNotFoundError:
+            existing_responses = []
+
+        print("Chcecking for responses to create new")
+        
+        # Append new response
+        if isinstance(existing_responses, list):
+            existing_responses.append(json_data)
+        else:
+            existing_responses = [existing_responses, json_data]
+        
+        existing_responses.append(evaluator_response)
+        print("Writing updated responses")
+        # Write updated responses
+        async with aiofiles.open(file_path, 'w') as file:
+            await file.write(json.dumps(existing_responses, indent=4))
 
     async def handle_stream(
         self,
@@ -114,8 +187,12 @@ class AudioStreamManager:
             # Send end of stream signal
             await self.elevenlabs.send_eos()
 
+            await self.save_conversation(query, chatGptResponse)
+
             # Wait for audio streaming to complete
             await stream_task
+            if (("Thanks for taking the time to interview with us! We will reach out to you with next steps shortly.") in chatGptResponse or ("INTERVIEW COMPLETED") in chatGptResponse):
+                await self.generate_final_report(history)
             return [chatGptResponse, chatgpt_res_audio_file_name]
 
         except Exception as e:

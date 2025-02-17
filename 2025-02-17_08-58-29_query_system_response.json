@@ -1,0 +1,21 @@
+[
+    [
+        {
+            "role": "assistant",
+            "content": "Hello Rajesh, I'm SAM, and I'll be conducting your interview today. Thank you for joining us. Let\u2019s ensure a smooth process; please keep your responses clear and concise to avoid long pauses. \n\nTo start off, can you give me a brief introduction about yourself and your background?",
+            "question_type": "followup_question",
+            "timestamp": "2025-02-17T08:58:03.454789",
+            "audio": "36038a26-6dd1-4a93-98fa-5fbbc1108a96_chatgpt_res.mp3",
+            "id": "d6737fa5-8193-40b6-9ef9-70a21203be6a"
+        },
+        {
+            "role": "user",
+            "content": "No, I will not give a brief introduction.",
+            "question_type": "answer",
+            "timestamp": "2025-02-17T08:58:26.045081",
+            "audio": "fb3eee2c-8ddd-4169-8c9d-4891d0f65eb9_answer.wav",
+            "id": "d6737fa5-8193-40b6-9ef9-70a21203be6a"
+        }
+    ],
+    "### Score for each relevant criterion ###\n- **Communication & Collaboration Skills: 1** \u2013 The candidate's refusal to provide a brief introduction indicates a significant lack of willingness to engage in a foundational aspect of the interview, suggesting poor communication skills.\n\n### Average Overall Score ###\n1.0\n\n### Overall Summary ###\nThe candidate's response demonstrates a complete inability to engage in basic communication, which is crucial for any role. Their refusal to share an introduction highlights a lack of interest in collaboration and openness in dialogue, leading to an extremely low evaluation."
+]

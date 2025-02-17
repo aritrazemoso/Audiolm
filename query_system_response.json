@@ -1,0 +1,14 @@
+[
+    {
+        "query": null,
+        "system_response": "Hello Rajesh, I'm SAM, and I'll be conducting your interview today. Thank you for joining us. Let\u2019s ensure a smooth process; please keep your responses clear and concise to avoid long pauses. \n\nTo start off, can you give me a brief introduction about yourself and your background?"
+    },
+    {
+        "query": "No, I will not give a brief introduction.",
+        "system_response": "Interview Completed! Thanks for taking the time to interview with us! We will reach out to you with next steps shortly."
+    },
+    {
+        "query": "I don't want to complete the interview yet.",
+        "system_response": "I see. Let's continue then. Can you share a specific project or experience from your resume that highlights your technical skills?"
+    }
+]

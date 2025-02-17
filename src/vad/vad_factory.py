@@ -19,9 +19,10 @@ class VADFactory:
         Returns:
             VADInterface: An instance of a class that implements VADInterface.
         """
-        if type == "pyannote":
-            return PyannoteVAD(**kwargs)
-        elif type == "silero":
+        # if type == "pyannote":
+        #     return PyannoteVAD(**kwargs)
+        # elif type == "silero":
+        if type == "silero":
             return SileroVAD(**kwargs)
         else:
             raise ValueError(f"Unknown VAD pipeline type: {type}")

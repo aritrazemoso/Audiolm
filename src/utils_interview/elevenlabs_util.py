@@ -86,9 +86,9 @@ class ElevenLabsClient:
             text=text,
             model_id="eleven_turbo_v2_5",  # use the turbo model for low latency
             voice_settings=ElevenLabsVoiceSettings(
-                stability=0.0,
-                similarity_boost=1.0,
-                style=0.0,
+                stability=0.95,
+                similarity_boost=0.75,
+                style=0.06,
                 use_speaker_boost=True,
             ),
         )
