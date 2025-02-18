@@ -483,7 +483,7 @@ class ChatGPTClient:
         
         print("query is : ", query)
         
-        print("Candidate resume : ", resume)
+        # print("Candidate resume : ", resume)
 
         system_messages = [
             {"role": "system", "content": systemMessage},
